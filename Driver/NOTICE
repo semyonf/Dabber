@@ -1,0 +1,14 @@
+Driver/BlackHole is BlackHole by Existential Audio Inc., licensed under GPL-3.0 (see Driver/BlackHole/LICENSE).
+It is not an official BlackHole build and does not use the BlackHole name, logo or artwork for the devices it creates.
+
+Upstream: https://github.com/ExistentialAudio/BlackHole
+Tag v0.7.1, commit e2b22aaaba4e507a097131704bf96dabc004d9cf.
+
+Local changes (git log -- Driver/BlackHole shows each one):
+- 2026-09-23: removed the Xcode project, installer, uninstaller, tests, images, icon and bundle plist.
+- 2026-09-23: the box name, model and manufacturer come from kDriver_Name and kManufacturer_Name
+  instead of fixed BlackHole and Existential Audio strings.
+
+Dabber builds BlackHole.c with scripts/build-driver.sh into DabberMic.driver. That build publishes an
+input-only device "Dabber Mic" and a hidden output-only device "Dabber Feed" through upstream's documented
+build-time defines.

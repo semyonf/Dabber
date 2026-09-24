@@ -1,0 +1,702 @@
+import Foundation
+import Observation
+import Synchronization
+import Testing
+@testable import DabberCore
+
+private final class FakeEngine: RecordingEngine, @unchecked Sendable {
+    var started: [[SourceSpec]] = []
+    var phase: RecorderPhase = .idle
+    var snapshots: [SourceSnapshot] = []
+    var dir = URL(fileURLWithPath: "/tmp/fake-session")
+    var lastSessionDir: URL?
+    var startError: Error?
+    var diskWarning: String?
+    var lastError: String?
+    var startGate: DispatchSemaphore?
+    let startEntered = Atomic<Bool>(false)
+
+    func start(specs: [SourceSpec], title: String) throws -> URL {
+        startEntered.store(true, ordering: .relaxed)
+        startGate?.wait()
+        if let startError { throw startError }
+        if phase != .idle { throw RecorderError.busy }
+        lastError = nil
+        started.append(specs)
+        manifest.title = title
+        phase = .recording
+        return dir
+    }
+
+    func stop() -> URL? {
+        phase = .idle
+        lastSessionDir = dir
+        return dir
+    }
+
+    var manifest = SessionManifest(appVersion: "t", startedAt: Date(), sessionStartNanos: 1_000_000_000)
+
+    func addMark(atNanos: UInt64) -> [Mark] { editMarks { $0.addMark(atNanos: atNanos) } }
+    func setMarkText(id: Int, _ text: String) -> [Mark] { editMarks { $0.setMarkText(id: id, text) } }
+    func removeMark(id: Int) -> [Mark] { editMarks { $0.removeMark(id: id) } }
+    func setTitle(_ title: String) { _ = editMarks { $0.title = title } }
+
+    private func editMarks(_ edit: (inout SessionManifest) -> Void) -> [Mark] {
+        guard phase == .recording else { return [] }
+        edit(&manifest)
+        return manifest.marks
+    }
+
+    func status(at now: Date) -> RecorderStatus {
+        RecorderStatus(phase: phase, elapsedSeconds: 61, sources: snapshots, sessionDir: phase == .recording ? dir : nil, lastError: lastError,
+            diskWarning: diskWarning)
+    }
+}
+
+private final class FakeCatalog: DeviceCatalog, @unchecked Sendable {
+    var devices: [InputDevice]
+    var defaultUID: String?
+    init(devices: [InputDevice], defaultUID: String? = nil) {
+        self.devices = devices
+        self.defaultUID = defaultUID
+    }
+    func inputs() throws -> [InputDevice] { devices }
+    func defaultInputUID() -> String? { defaultUID }
+}
+
+private let airpods = InputDevice(id: 1, uid: "ap", name: "AirPods")
+private let usb = InputDevice(id: 2, uid: "usb", name: "USB")
+
+@MainActor
+private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], finalized: @escaping @Sendable (URL) -> Void = { _ in }) -> RecorderModel {
+    let m = RecorderModel(
+        engine: engine, catalog: FakeCatalog(devices: [airpods, usb]), enabledIDs: enabled, persist: { _ in },
+        finalize: { dir, _ in finalized(dir); return dir })
+    m.refreshDevices()
+    return m
+}
+
+@MainActor @Test func rowsListComputerAudioThenDevices() {
+    let m = model(FakeEngine())
+    #expect(m.rows.map(\.id) == ["computer", "ap", "usb"])
+    #expect(m.rows.map(\.enabled) == [true, false, false])
+}
+
+@MainActor @Test func dabberMicIsNeverARecordingSource() {
+    let dabberMic = InputDevice(id: 9, uid: FeedDevices.micUID, name: "Dabber Mic")
+    let m = RecorderModel(
+        engine: FakeEngine(), catalog: FakeCatalog(devices: [airpods, dabberMic]), enabledIDs: ["computer", FeedDevices.micUID],
+        persist: { _ in }, finalize: { dir, _ in dir })
+    m.refreshDevices()
+    #expect(!m.rows.contains { $0.id == FeedDevices.micUID })
+}
+
+@MainActor @Test func rowTitlesSayMacAudioAndMarkMissingDevices() {
+    let m = absentModel(FakeEngine(), enabled: ["ap"], defaultUID: nil)
+    #expect(m.rows.map(\.title) == ["Mac audio", "USB", "AirPods (not connected)"])
+    #expect(m.rows[0].name == "Computer audio")
+}
+
+@MainActor @Test func levelBarsOnlyForCheckedOrRecordedSources() async {
+    let e = FakeEngine()
+    let m = model(e)
+    #expect(m.rows.map(\.showsLevel) == [true, false, false])
+    e.snapshots = [SourceSnapshot(spec: SourceSpec(kind: .mic, uid: "usb", name: "USB"), status: .running, levelDb: -20, silent: false)]
+    e.phase = .recording
+    m.tick()
+    #expect(m.rows.map(\.showsLevel) == [true, false, true])
+}
+
+@MainActor @Test func recordButtonFollowsThePhase() async {
+    let e = FakeEngine()
+    let m = model(e, finalized: { _ in Thread.sleep(forTimeInterval: 0.05) })
+    #expect(m.recordTitle == "● Record")
+    #expect(m.canStartStop)
+    await m.startStop()
+    #expect(m.recordTitle == "■ Stop")
+    #expect(m.canStartStop)
+    let stopping = Task { await m.startStop() }
+    while !m.finalizing { await Task.yield() }
+    #expect(m.recordTitle == "Finalizing…")
+    #expect(!m.canStartStop)
+    await stopping.value
+    #expect(m.recordTitle == "● Record")
+    m.toggle("computer")
+    #expect(!m.canStartStop)
+}
+
+@MainActor @Test func recordButtonIsDisabledWhileAStartIsInProgress() async {
+    let e = FakeEngine()
+    e.startGate = DispatchSemaphore(value: 0)
+    let m = model(e)
+    let starting = Task { await m.startStop() }
+    while !e.startEntered.load(ordering: .relaxed) { await Task.yield() }
+    #expect(!m.canStartStop)
+    let second = Task { await m.startStop() }
+    try? await Task.sleep(for: .milliseconds(20))
+    e.startGate?.signal()
+    e.startGate?.signal()
+    await starting.value
+    await second.value
+    #expect(e.started.count == 1)
+    #expect(m.errorText == nil)
+    #expect(m.isRecording)
+    #expect(m.canStartStop)
+}
+
+@MainActor @Test func unchangedTickDoesNotInvalidateRows() {
+    let e = FakeEngine()
+    let m = model(e, enabled: ["computer", "ap"])
+    e.phase = .recording
+    e.snapshots = [SourceSnapshot(spec: SourceSpec(kind: .computer, uid: nil, name: "Computer audio"), status: .running, levelDb: -12, silent: false)]
+    m.tick()
+    nonisolated(unsafe) var changed = false
+    withObservationTracking { _ = m.rows } onChange: { changed = true }
+    m.tick()
+    #expect(!changed)
+    e.snapshots = [SourceSnapshot(spec: SourceSpec(kind: .computer, uid: nil, name: "Computer audio"), status: .running, levelDb: -20, silent: false)]
+    m.tick()
+    #expect(changed)
+    #expect(m.rows[0].levelDb == -20)
+}
+
+@MainActor @Test func macAudioWarningsUseTheUILabel() {
+    let e = FakeEngine()
+    let m = model(e)
+    e.phase = .recording
+    e.snapshots = [SourceSnapshot(spec: SourceSpec(kind: .computer, uid: nil, name: "Computer audio"), status: .running, levelDb: -90, silent: true)]
+    m.tick()
+    #expect(m.warning == "Mac audio: no signal for 10 s")
+}
+
+@MainActor @Test func startUsesEnabledAvailableRows() async {
+    let e = FakeEngine()
+    let m = model(e, enabled: ["computer", "ap", "gone"])
+    await m.startStop()
+    #expect(e.started == [[
+        SourceSpec(kind: .computer, uid: nil, name: "Computer audio"),
+        SourceSpec(kind: .mic, uid: "ap", name: "AirPods"),
+        SourceSpec(kind: .mic, uid: "gone", name: "gone"),
+    ]])
+    #expect(m.phase == .recording)
+    #expect(m.warning == "gone not connected")
+}
+
+@MainActor @Test func stopFinalizesAndRemembersTheSession() async {
+    let e = FakeEngine()
+    nonisolated(unsafe) var finalized: [URL] = []
+    let m = model(e) { finalized.append($0) }
+    await m.startStop()
+    await m.startStop()
+    #expect(e.phase == .idle)
+    #expect(finalized == [e.dir])
+    #expect(m.lastSessionDir == e.dir)
+    #expect(!m.finalizing)
+}
+
+@MainActor @Test func sessionThatStoppedItselfIsFinalized() async {
+    let e = FakeEngine()
+    nonisolated(unsafe) var finalized: [URL] = []
+    let m = model(e) { finalized.append($0) }
+    await m.startStop()
+    e.phase = .idle
+    e.lastSessionDir = e.dir
+    m.tick()
+    #expect(m.finalizing)
+    while m.finalizing { await Task.yield() }
+    #expect(finalized == [e.dir])
+    #expect(m.lastSessionDir == e.dir)
+    m.tick()
+    #expect(finalized == [e.dir])
+}
+
+@MainActor @Test func selfStopSeenThroughStoppingIsFinalizedOnce() async {
+    let e = FakeEngine()
+    nonisolated(unsafe) var finalized: [URL] = []
+    let m = model(e) { finalized.append($0) }
+    await m.startStop()
+    e.phase = .stopping
+    m.tick()
+    e.phase = .idle
+    e.lastSessionDir = e.dir
+    m.tick()
+    #expect(m.finalizing)
+    m.tick()
+    while m.finalizing { await Task.yield() }
+    m.tick()
+    #expect(finalized == [e.dir])
+    #expect(m.lastSessionDir == e.dir)
+}
+
+@MainActor @Test func quitDuringFinalizeWaitsForTheFinalizeToReturn() async {
+    let e = FakeEngine()
+    let gate = DispatchSemaphore(value: 0)
+    nonisolated(unsafe) var returned = false
+    let m = model(e) { _ in
+        gate.wait()
+        returned = true
+    }
+    await m.startStop()
+    let stopping = Task { await m.startStop() }
+    while !m.finalizing || m.isRecording { await Task.yield() }
+    let quit = Task { await m.prepareToQuit(); return returned }
+    try? await Task.sleep(for: .milliseconds(50))
+    gate.signal()
+    #expect(await quit.value)
+    await stopping.value
+}
+
+@MainActor @Test func quitDuringASelfStopFinalizeWaitsForIt() async {
+    let e = FakeEngine()
+    let gate = DispatchSemaphore(value: 0)
+    nonisolated(unsafe) var returned = false
+    let m = model(e) { _ in
+        gate.wait()
+        returned = true
+    }
+    await m.startStop()
+    e.phase = .idle
+    e.lastSessionDir = e.dir
+    m.tick()
+    let quit = Task { await m.prepareToQuit(); return returned }
+    try? await Task.sleep(for: .milliseconds(50))
+    gate.signal()
+    #expect(await quit.value)
+}
+
+@MainActor @Test func quitWhileRecordingSaysItIsFinalizingBeforeQuit() async {
+    let e = FakeEngine()
+    let gate = DispatchSemaphore(value: 0)
+    let m = model(e) { _ in gate.wait() }
+    await m.startStop()
+    let quit = Task { await m.prepareToQuit() }
+    while !m.finalizing || m.isRecording { await Task.yield() }
+    #expect(m.recordTitle == "Finalizing before quit…")
+    gate.signal()
+    await quit.value
+}
+
+@MainActor @Test func quitDuringAFinalizeSaysItIsFinalizingBeforeQuit() async {
+    let e = FakeEngine()
+    let gate = DispatchSemaphore(value: 0)
+    let m = model(e) { _ in gate.wait() }
+    await m.startStop()
+    let stopping = Task { await m.startStop() }
+    while !m.finalizing || m.isRecording { await Task.yield() }
+    #expect(m.recordTitle == "Finalizing…")
+    let quit = Task { await m.prepareToQuit() }
+    try? await Task.sleep(for: .milliseconds(20))
+    #expect(m.recordTitle == "Finalizing before quit…")
+    gate.signal()
+    await quit.value
+    await stopping.value
+}
+
+@MainActor @Test func stopErrorClearsOnceSeenAfterTheFinalize() async {
+    let e = FakeEngine()
+    let gate = DispatchSemaphore(value: 0)
+    let m = model(e) { _ in gate.wait() }
+    await m.startStop()
+    e.phase = .idle
+    e.lastSessionDir = e.dir
+    e.lastError = "disk almost full (5 MB free)"
+    m.tick()
+    #expect(m.warning == "stopped: disk almost full (5 MB free)")
+    m.menuClosed()
+    #expect(m.warning == "stopped: disk almost full (5 MB free)")
+    gate.signal()
+    while m.finalizing { await Task.yield() }
+    m.tick()
+    #expect(m.warning == "stopped: disk almost full (5 MB free)")
+    m.menuClosed()
+    #expect(m.warning == nil)
+    m.tick()
+    #expect(m.warning == nil)
+}
+
+@MainActor @Test func stopErrorOfTheNextSessionIsShownAgain() async {
+    let e = FakeEngine()
+    let m = model(e)
+    await m.startStop()
+    e.phase = .idle
+    e.lastSessionDir = e.dir
+    e.lastError = "disk almost full (5 MB free)"
+    m.tick()
+    while m.finalizing { await Task.yield() }
+    m.menuClosed()
+    #expect(m.warning == nil)
+    await m.startStop()
+    #expect(m.isRecording)
+    e.phase = .idle
+    e.lastError = "caf write failed: 1"
+    m.tick()
+    #expect(m.warning == "stopped: caf write failed: 1")
+}
+
+@MainActor @Test func recoveryFailureIsAWarningUntilSeen() {
+    let m = model(FakeEngine())
+    m.recoveryFailed(URL(fileURLWithPath: "/tmp/rec/2026-09-23 10-00"), RecorderError.noSources)
+    #expect(m.warning == "Could not finish 2026-09-23 10-00: no sources selected")
+    m.tick()
+    #expect(m.warning == "Could not finish 2026-09-23 10-00: no sources selected")
+    m.menuClosed()
+    #expect(m.warning == nil)
+}
+
+@MainActor @Test func lowDiskWarningIsShown() async {
+    let e = FakeEngine()
+    let m = model(e, enabled: ["computer", "ap"])
+    await m.startStop()
+    e.diskWarning = "disk space low: about 19 min of recording left"
+    m.tick()
+    #expect(m.warning == "disk space low: about 19 min of recording left")
+}
+
+@MainActor @Test func tickMapsStatusIntoRowsAndWarning() {
+    let e = FakeEngine()
+    let m = model(e, enabled: ["computer", "ap"])
+    e.phase = .recording
+    e.snapshots = [
+        SourceSnapshot(spec: SourceSpec(kind: .computer, uid: nil, name: "Computer audio"), status: .running, levelDb: -12, silent: false),
+        SourceSnapshot(spec: SourceSpec(kind: .mic, uid: "ap", name: "AirPods"), status: .restarting("nsrt"), levelDb: -70, silent: true),
+    ]
+    m.tick()
+    #expect(m.elapsed == "1:01")
+    #expect(m.rows[0].levelDb == -12)
+    #expect(m.rows[1].status == .restarting("nsrt"))
+    #expect(m.warning == "AirPods: no signal for 10 s; AirPods: restarting (nsrt)")
+}
+
+@MainActor @Test func startErrorIsShownNotThrown() async {
+    let e = FakeEngine()
+    e.startError = RecorderError.lowDisk(freeBytes: 5)
+    let m = model(e)
+    await m.startStop()
+    #expect(m.phase == .idle)
+    #expect(m.errorText?.contains("MB free") == true)
+}
+
+@MainActor private func absentModel(
+    _ engine: FakeEngine, enabled: Set<String>, devices: [InputDevice] = [usb], defaultUID: String?,
+    names: [String: String] = ["ap": "AirPods"]
+) -> RecorderModel {
+    let m = RecorderModel(
+        engine: engine, catalog: FakeCatalog(devices: devices, defaultUID: defaultUID), enabledIDs: enabled,
+        names: names, persist: { _ in }, finalize: { dir, _ in dir })
+    m.refreshDevices()
+    return m
+}
+
+@MainActor @Test func missingEnabledDeviceStaysListedAsNotConnected() {
+    let m = absentModel(FakeEngine(), enabled: ["ap"], defaultUID: "usb")
+    #expect(m.rows.map(\.id) == ["computer", "usb", "ap"])
+    #expect(m.rows.map(\.name) == ["Computer audio", "USB", "AirPods"])
+    #expect(m.rows.map(\.connected) == [true, true, false])
+    #expect(m.rows[2].enabled)
+    m.toggle("usb")
+    #expect(m.rows[1].enabled)
+}
+
+@MainActor @Test func missingEnabledMicFallsBackToDefaultInputAndWarns() async {
+    let e = FakeEngine()
+    let m = absentModel(e, enabled: ["computer", "ap"], defaultUID: "usb")
+    await m.startStop()
+    #expect(e.started == [[
+        SourceSpec(kind: .computer, uid: nil, name: "Computer audio"),
+        SourceSpec(kind: .mic, uid: "ap", name: "AirPods"),
+        SourceSpec(kind: .mic, uid: "usb", name: "USB"),
+    ]])
+    #expect(m.warning == "AirPods not connected — recording USB")
+    await m.startStop()
+    #expect(m.warning == nil)
+}
+
+@MainActor @Test func absentMicWarningClearsOnceItConnects() async {
+    let e = FakeEngine()
+    let m = absentModel(e, enabled: ["computer", "ap"], defaultUID: "usb")
+    await m.startStop()
+    let ap = SourceSpec(kind: .mic, uid: "ap", name: "AirPods")
+    e.snapshots = [SourceSnapshot(spec: ap, status: .waitingForDevice, levelDb: -160, silent: false)]
+    m.tick()
+    #expect(m.rows[2].status == .waitingForDevice)
+    #expect(m.warning == "AirPods not connected — recording USB")
+    e.snapshots = [SourceSnapshot(spec: ap, status: .running, levelDb: -20, silent: false)]
+    m.tick()
+    #expect(m.warning == nil)
+    e.snapshots = [SourceSnapshot(spec: ap, status: .waitingForDevice, levelDb: -160, silent: false)]
+    m.tick()
+    #expect(m.warning == "AirPods: waiting for device")
+}
+
+@MainActor @Test func unpluggedFallbackStaysListedWhileTheSessionRuns() async {
+    let e = FakeEngine()
+    let catalog = FakeCatalog(devices: [usb], defaultUID: "usb")
+    let m = RecorderModel(
+        engine: e, catalog: catalog, enabledIDs: ["computer", "ap"], names: ["ap": "AirPods"],
+        persist: { _ in }, finalize: { dir, _ in dir })
+    m.refreshDevices()
+    await m.startStop()
+    catalog.devices = []
+    m.refreshDevices()
+    #expect(m.rows.map(\.id) == ["computer", "ap", "usb"])
+    #expect(m.rows.map(\.connected) == [true, false, false])
+    #expect(m.rows.map(\.enabled) == [true, true, false])
+    e.snapshots = [
+        SourceSnapshot(spec: SourceSpec(kind: .mic, uid: "ap", name: "AirPods"), status: .waitingForDevice, levelDb: -160, silent: false),
+        SourceSnapshot(spec: SourceSpec(kind: .mic, uid: "usb", name: "USB"), status: .waitingForDevice, levelDb: -160, silent: false),
+    ]
+    m.tick()
+    #expect(m.warning == "AirPods not connected — recording USB; USB: waiting for device")
+    await m.startStop()
+    #expect(m.rows.map(\.id) == ["computer", "ap"])
+}
+
+@MainActor @Test func startNoteListsOnlyMicsStillAbsent() async {
+    let e = FakeEngine()
+    let m = absentModel(e, enabled: ["computer", "ap", "bt"], defaultUID: "usb", names: ["ap": "AirPods", "bt": "Buds"])
+    await m.startStop()
+    #expect(m.warning == "AirPods, Buds not connected — recording USB")
+    e.snapshots = [
+        SourceSnapshot(spec: SourceSpec(kind: .mic, uid: "ap", name: "AirPods"), status: .running, levelDb: -20, silent: false),
+        SourceSnapshot(spec: SourceSpec(kind: .mic, uid: "bt", name: "Buds"), status: .waitingForDevice, levelDb: -160, silent: false),
+    ]
+    m.tick()
+    #expect(m.warning == "Buds not connected — recording USB")
+}
+
+@MainActor @Test func presentEnabledMicNeedsNoFallback() async {
+    let e = FakeEngine()
+    let m = absentModel(e, enabled: ["computer", "ap"], devices: [airpods, usb], defaultUID: "usb")
+    await m.startStop()
+    #expect(e.started == [[
+        SourceSpec(kind: .computer, uid: nil, name: "Computer audio"),
+        SourceSpec(kind: .mic, uid: "ap", name: "AirPods"),
+    ]])
+    #expect(m.warning == nil)
+}
+
+@MainActor @Test func noEnabledMicFallsBackToDefaultInput() async {
+    let e = FakeEngine()
+    let m = absentModel(e, enabled: ["computer"], devices: [airpods, usb], defaultUID: "ap")
+    await m.startStop()
+    #expect(e.started == [[
+        SourceSpec(kind: .computer, uid: nil, name: "Computer audio"),
+        SourceSpec(kind: .mic, uid: "ap", name: "AirPods"),
+    ]])
+    #expect(m.warning == "No microphone selected — recording AirPods")
+}
+
+@MainActor @Test func noDefaultInputStartsAnywayAndWarns() async {
+    let e = FakeEngine()
+    let m = absentModel(e, enabled: ["computer", "ap"], defaultUID: nil)
+    await m.startStop()
+    #expect(e.started == [[
+        SourceSpec(kind: .computer, uid: nil, name: "Computer audio"),
+        SourceSpec(kind: .mic, uid: "ap", name: "AirPods"),
+    ]])
+    #expect(m.phase == .recording)
+    #expect(m.warning == "No microphone available")
+}
+
+@MainActor @Test func enabledDeviceNamesArePersisted() {
+    nonisolated(unsafe) var saved: [[String: String]] = []
+    let m = RecorderModel(
+        engine: FakeEngine(), catalog: FakeCatalog(devices: [airpods, usb]), enabledIDs: ["ap"],
+        persist: { _ in }, persistNames: { saved.append($0) }, finalize: { dir, _ in dir })
+    m.refreshDevices()
+    #expect(saved.last == ["ap": "AirPods"])
+    m.toggle("usb")
+    #expect(saved.last == ["ap": "AirPods", "usb": "USB"])
+    m.toggle("ap")
+    #expect(saved.last == ["usb": "USB"])
+}
+
+@Test func elapsedFormatting() {
+    #expect(RecorderModel.format(seconds: 0) == "0:00")
+    #expect(RecorderModel.format(seconds: 65) == "1:05")
+    #expect(RecorderModel.format(seconds: 3_723) == "1:02:03")
+}
+
+@Test func firstLaunchEnablesComputerAudioAndDefaultInput() {
+    #expect(RecorderModel.defaultEnabledIDs(defaultInputUID: "ap") == ["computer", "ap"])
+    #expect(RecorderModel.defaultEnabledIDs(defaultInputUID: nil) == ["computer"])
+}
+
+private final class FakeHostClock: @unchecked Sendable {
+    var now: UInt64 = 1_000_000_000
+}
+
+@MainActor
+private func markModel(_ engine: FakeEngine, _ clock: FakeHostClock) async -> RecorderModel {
+    let m = RecorderModel(
+        engine: engine, catalog: FakeCatalog(devices: [airpods]), enabledIDs: ["computer"], persist: { _ in },
+        finalize: { dir, _ in dir }, clock: { clock.now })
+    m.refreshDevices()
+    await m.startStop()
+    return m
+}
+
+@MainActor @Test func markTakesThePressTimeAndTheCommentDoesNotMoveIt() async {
+    let e = FakeEngine()
+    let clock = FakeHostClock()
+    let m = await markModel(e, clock)
+    #expect(m.canMark)
+    clock.now = 6_000_000_000
+    m.mark()
+    #expect(m.marks == [Mark(id: 1, offsetNanos: 5_000_000_000)])
+    #expect(m.editingMarkID == 1)
+    #expect(m.markRows == [RecorderModel.MarkRow(id: 1, time: "0:05", title: "Mark 1")])
+    clock.now = 9_000_000_000
+    m.draft = "про деньги"
+    m.saveComment()
+    #expect(m.marks == [Mark(id: 1, offsetNanos: 5_000_000_000, text: "про деньги")])
+    #expect(m.editingMarkID == nil)
+    #expect(m.draft == "")
+    #expect(e.manifest.marks == m.marks)
+}
+
+@MainActor @Test func nextMarkSavesTheOpenCommentFirst() async {
+    let e = FakeEngine()
+    let clock = FakeHostClock()
+    let m = await markModel(e, clock)
+    clock.now = 2_000_000_000
+    m.mark()
+    m.draft = "first"
+    clock.now = 3_000_000_000
+    m.mark()
+    #expect(m.markRows.map(\.title) == ["first", "Mark 2"])
+    #expect(m.editingMarkID == 2)
+}
+
+@MainActor @Test func removingAMarkDropsItsOpenComment() async {
+    let e = FakeEngine()
+    let m = await markModel(e, FakeHostClock())
+    m.mark()
+    m.draft = "gone"
+    m.removeMark(1)
+    #expect(m.marks.isEmpty)
+    #expect(m.editingMarkID == nil)
+    #expect(m.draft == "")
+    #expect(e.manifest.marks.isEmpty)
+}
+
+@MainActor @Test func closingTheMenuSavesTheOpenComment() async {
+    let e = FakeEngine()
+    let m = await markModel(e, FakeHostClock())
+    m.mark()
+    m.draft = "typed"
+    m.menuClosed()
+    #expect(e.manifest.marks.map(\.text) == ["typed"])
+}
+
+@MainActor @Test func stopSavesTheOpenCommentAndClearsTheList() async {
+    let e = FakeEngine()
+    let m = await markModel(e, FakeHostClock())
+    m.mark()
+    m.draft = "last words"
+    await m.startStop()
+    #expect(e.manifest.marks.map(\.text) == ["last words"])
+    #expect(m.marks.isEmpty)
+    #expect(m.editingMarkID == nil)
+    #expect(!m.canMark)
+    m.mark()
+    #expect(e.manifest.marks.count == 1)
+}
+
+private final class FakeCalendar: CalendarSource, @unchecked Sendable {
+    let make: @Sendable (Date) -> [CalendarEvent]
+    var windows: [TimeInterval] = []
+
+    init(_ make: @escaping @Sendable (Date) -> [CalendarEvent]) { self.make = make }
+
+    func events(from start: Date, to end: Date) async -> [CalendarEvent] {
+        windows.append(end.timeIntervalSince(start))
+        return make(start)
+    }
+}
+
+@MainActor @Test func recordingTakesTheCurrentEventTitleAndSavesEdits() async {
+    let e = FakeEngine()
+    let calendar = FakeCalendar { now in
+        [
+            CalendarEvent(title: "Holiday", start: now.addingTimeInterval(-3_600), end: now.addingTimeInterval(3_600), isAllDay: true),
+            CalendarEvent(title: "Планёрка", start: now.addingTimeInterval(-120), end: now.addingTimeInterval(1_800)),
+        ]
+    }
+    let renamed = URL(fileURLWithPath: "/tmp/renamed-session")
+    let m = RecorderModel(
+        engine: e, catalog: FakeCatalog(devices: [airpods]), enabledIDs: ["computer"], persist: { _ in },
+        finalize: { _, _ in renamed }, calendar: calendar)
+    m.refreshDevices()
+    await m.startStop()
+    #expect(calendar.windows == [900])
+    #expect(m.title == "Планёрка")
+    #expect(e.manifest.title == "Планёрка")
+    m.setTitle("Планёрка: итоги")
+    #expect(m.title == "Планёрка: итоги")
+    #expect(e.manifest.title == "Планёрка: итоги")
+    await m.startStop()
+    #expect(m.title == "")
+    #expect(m.lastSessionDir == renamed)
+}
+
+@MainActor @Test func withoutAnEventTheTitleIsEmpty() async {
+    let e = FakeEngine()
+    let m = model(e)
+    await m.startStop()
+    #expect(e.started.count == 1)
+    #expect(m.title == "")
+    #expect(e.manifest.title == "")
+}
+
+@MainActor @Test func finalizeGetsTheChosenFolderAndTheChoiceIsPersisted() async {
+    let e = FakeEngine()
+    nonisolated(unsafe) var outputs: [String] = []
+    nonisolated(unsafe) var saved: [String] = []
+    let m = RecorderModel(
+        engine: e, catalog: FakeCatalog(devices: [airpods]), enabledIDs: ["computer"], persist: { _ in },
+        finalize: { dir, out in outputs.append(out.path); return dir },
+        outputFolder: URL(fileURLWithPath: "/tmp/out-a"), persistOutput: { saved.append($0.path) })
+    m.refreshDevices()
+    #expect(m.outputFolder.path == "/tmp/out-a")
+    m.setOutputFolder(URL(fileURLWithPath: "/tmp/out-b"))
+    #expect(m.outputFolder.path == "/tmp/out-b")
+    #expect(saved == ["/tmp/out-b"])
+    await m.startStop()
+    await m.startStop()
+    #expect(outputs == ["/tmp/out-b"])
+}
+
+@MainActor @Test func failedDeliveryKeepsTheLocalSessionAndWarnsUntilADeliverySucceeds() async {
+    let e = FakeEngine()
+    let local = URL(fileURLWithPath: "/tmp/work/2026-09-24 10-00")
+    let moved = URL(fileURLWithPath: "/tmp/out/2026-09-24 10-00")
+    let fail = Atomic<Bool>(true)
+    let m = RecorderModel(
+        engine: e, catalog: FakeCatalog(devices: [airpods]), enabledIDs: ["computer"], persist: { _ in },
+        finalize: { _, _ in
+            if fail.load(ordering: .relaxed) { throw DeliveryFailed(dir: local, reason: "folder not found: /tmp/out") }
+            return moved
+        })
+    m.refreshDevices()
+    await m.startStop()
+    await m.startStop()
+    #expect(m.lastSessionDir == local)
+    #expect(m.errorText == nil)
+    #expect(m.warning == "Saved in the local folder: folder not found: /tmp/out")
+    m.menuClosed()
+    #expect(m.warning == "Saved in the local folder: folder not found: /tmp/out")
+    fail.store(false, ordering: .relaxed)
+    await m.startStop()
+    await m.startStop()
+    #expect(m.lastSessionDir == moved)
+    #expect(m.warning == nil)
+}
+
+@MainActor @Test func launchDeliveryResultSetsAndClearsTheWarning() {
+    let m = model(FakeEngine())
+    m.deliveryDone(failure: "folder not found: /x")
+    #expect(m.warning == "Saved in the local folder: folder not found: /x")
+    m.deliveryDone(failure: nil)
+    #expect(m.warning == nil)
+}

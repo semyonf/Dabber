@@ -1,0 +1,5 @@
+.build/
+build/
+*.caf
+.DS_Store
+.swiftpm/
