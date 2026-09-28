@@ -6,6 +6,8 @@ import Testing
 
 private final class FakeEngine: RecordingEngine, @unchecked Sendable {
     var started: [[SourceSpec]] = []
+    var slides: [Bool] = []
+    let frames = Mutex<[UInt64]>([])
     var phase: RecorderPhase = .idle
     var snapshots: [SourceSnapshot] = []
     var dir = URL(fileURLWithPath: "/tmp/fake-session")
@@ -16,13 +18,14 @@ private final class FakeEngine: RecordingEngine, @unchecked Sendable {
     var startGate: DispatchSemaphore?
     let startEntered = Atomic<Bool>(false)
 
-    func start(specs: [SourceSpec], title: String) throws -> URL {
+    func start(specs: [SourceSpec], title: String, slides: Bool) throws -> URL {
         startEntered.store(true, ordering: .relaxed)
         startGate?.wait()
         if let startError { throw startError }
         if phase != .idle { throw RecorderError.busy }
         lastError = nil
         started.append(specs)
+        self.slides.append(slides)
         manifest.title = title
         phase = .recording
         return dir
@@ -40,6 +43,12 @@ private final class FakeEngine: RecordingEngine, @unchecked Sendable {
     func setMarkText(id: Int, _ text: String) -> [Mark] { editMarks { $0.setMarkText(id: id, text) } }
     func removeMark(id: Int) -> [Mark] { editMarks { $0.removeMark(id: id) } }
     func setTitle(_ title: String) { _ = editMarks { $0.title = title } }
+
+    func addFrame(atNanos: UInt64, data: Data) throws -> Bool {
+        guard phase == .recording else { return false }
+        frames.withLock { $0.append(atNanos) }
+        return true
+    }
 
     private func editMarks(_ edit: (inout SessionManifest) -> Void) -> [Mark] {
         guard phase == .recording else { return [] }
@@ -698,5 +707,87 @@ private final class FakeCalendar: CalendarSource, @unchecked Sendable {
     m.deliveryDone(failure: "folder not found: /x")
     #expect(m.warning == "Saved in the local folder: folder not found: /x")
     m.deliveryDone(failure: nil)
+    #expect(m.warning == nil)
+}
+
+private struct StillScreen: ScreenGrabber {
+    var permitted = true
+    func allowed() -> Bool { permitted }
+    func grab() async throws -> ScreenGrab { ScreenGrab(image: screen(), display: 1) }
+}
+
+@MainActor
+private func slidesModel(
+    _ engine: FakeEngine, on: Bool, permitted: Bool = true, persist: @escaping @Sendable (Bool) -> Void = { _ in }
+) -> (RecorderModel, SlideRecorder) {
+    let slides = SlideRecorder(grabber: StillScreen(permitted: permitted), interval: .milliseconds(5))
+    let m = RecorderModel(
+        engine: engine, catalog: FakeCatalog(devices: [airpods]), enabledIDs: ["computer", "ap"], persist: { _ in },
+        finalize: { dir, _ in dir }, slides: slides, slidesOn: on, persistSlides: persist)
+    m.refreshDevices()
+    return (m, slides)
+}
+
+@MainActor @Test func slidesSwitchIsSavedAndLockedWhileRecording() async {
+    let e = FakeEngine()
+    nonisolated(unsafe) var saved: [Bool] = []
+    let (m, _) = slidesModel(e, on: false) { saved.append($0) }
+    m.toggleSlides()
+    #expect(m.slidesOn)
+    await m.startStop()
+    m.toggleSlides()
+    #expect(m.slidesOn)
+    await m.startStop()
+    m.toggleSlides()
+    #expect(!m.slidesOn)
+    #expect(saved == [true, false])
+}
+
+@MainActor @Test func recordingWithSlidesGrabsIntoTheEngineUntilStop() async {
+    let e = FakeEngine()
+    let (m, slides) = slidesModel(e, on: true)
+    await m.startStop()
+    #expect(e.slides == [true])
+    #expect(waitUntil { e.frames.withLock { $0.count } == 1 })
+    #expect(slides.status == .on)
+    await m.startStop()
+    #expect(slides.status == nil)
+    let off = FakeEngine()
+    let (m2, slides2) = slidesModel(off, on: false)
+    await m2.startStop()
+    #expect(off.slides == [false])
+    #expect(slides2.status == nil)
+}
+
+@MainActor @Test func slidesStopWhenTheSessionStopsItself() async {
+    let e = FakeEngine()
+    let (m, slides) = slidesModel(e, on: true)
+    await m.startStop()
+    #expect(slides.status == .on)
+    e.phase = .idle
+    m.tick()
+    #expect(slides.status == nil)
+}
+
+@MainActor @Test func missingScreenPermissionIsAWarning() async {
+    let e = FakeEngine()
+    let (m, _) = slidesModel(e, on: true, permitted: false)
+    await m.startStop()
+    #expect(m.warning == "Screen: no permission (Privacy & Security > Screen & System Audio Recording)")
+    #expect(e.frames.withLock { $0.isEmpty })
+}
+
+@MainActor @Test func aFailedSlideshowIsAWarningUntilSeen() async throws {
+    let e = FakeEngine()
+    e.dir = FileManager.default.temporaryDirectory.appendingPathComponent("sv-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: e.dir, withIntermediateDirectories: true)
+    var manifest = SessionManifest(appVersion: "t", startedAt: Date(), sessionStartNanos: 1)
+    manifest.finalize = FinalizeReport(totalFrames: 1, gaps: [], driftMillis: [:], resampled: [], slidesError: "no frames")
+    try manifest.save(to: e.dir)
+    let (m, _) = slidesModel(e, on: true)
+    await m.startStop()
+    await m.startStop()
+    #expect(m.warning == "Slides video failed: no frames")
+    m.menuClosed()
     #expect(m.warning == nil)
 }

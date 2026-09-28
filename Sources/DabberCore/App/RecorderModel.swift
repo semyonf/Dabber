@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 public protocol RecordingEngine: Sendable {
-    func start(specs: [SourceSpec], title: String) throws -> URL
+    func start(specs: [SourceSpec], title: String, slides: Bool) throws -> URL
     func setTitle(_ title: String)
     func stop() -> URL?
     func status(at now: Date) -> RecorderStatus
@@ -10,10 +10,13 @@ public protocol RecordingEngine: Sendable {
     func addMark(atNanos: UInt64) -> [Mark]
     func setMarkText(id: Int, _ text: String) -> [Mark]
     func removeMark(id: Int) -> [Mark]
+    func addFrame(atNanos: UInt64, data: Data) throws -> Bool
 }
 
 extension SessionRecorder: RecordingEngine {
-    public func start(specs: [SourceSpec], title: String) throws -> URL { try start(specs: specs, title: title, at: Date()) }
+    public func start(specs: [SourceSpec], title: String, slides: Bool) throws -> URL {
+        try start(specs: specs, title: title, slides: slides, at: Date())
+    }
 }
 
 public protocol DeviceCatalog: Sendable {
@@ -66,6 +69,7 @@ public final class RecorderModel {
     public var draft = ""
     public private(set) var title = ""
     public private(set) var outputFolder: URL
+    public private(set) var slidesOn: Bool
 
     private let engine: any RecordingEngine
     private let catalog: any DeviceCatalog
@@ -75,6 +79,8 @@ public final class RecorderModel {
     private let persistOutput: @Sendable (URL) -> Void
     private let clock: @Sendable () -> UInt64
     private let calendar: any CalendarSource
+    private let slides: SlideRecorder?
+    private let persistSlides: @Sendable (Bool) -> Void
     private var enabledIDs: Set<String>
     private var names: [String: String]
     private enum StartNote { case noneSelected(String), missing(String?), unavailable }
@@ -86,7 +92,7 @@ public final class RecorderModel {
     private var finalizeTask: Task<Void, Never>?
     private var quitting = false
     private var stopErrorSeen = false
-    private var recoveryNotes: [String] = []
+    private var notices: [String] = []
     private var deliveryNote: String?
 
     public init(
@@ -98,7 +104,10 @@ public final class RecorderModel {
         clock: @escaping @Sendable () -> UInt64 = HostClock.nowNanos,
         calendar: any CalendarSource = NoCalendar(),
         outputFolder: URL = AppPaths.recordingsRoot,
-        persistOutput: @escaping @Sendable (URL) -> Void = { _ in }
+        persistOutput: @escaping @Sendable (URL) -> Void = { _ in },
+        slides: SlideRecorder? = nil,
+        slidesOn: Bool = false,
+        persistSlides: @escaping @Sendable (Bool) -> Void = { _ in }
     ) {
         self.engine = engine
         self.catalog = catalog
@@ -111,6 +120,9 @@ public final class RecorderModel {
         self.calendar = calendar
         self.outputFolder = outputFolder
         self.persistOutput = persistOutput
+        self.slides = slides
+        self.slidesOn = slidesOn
+        self.persistSlides = persistSlides
         lastSessionDir = engine.lastSessionDir
     }
 
@@ -155,6 +167,12 @@ public final class RecorderModel {
     public func setOutputFolder(_ url: URL) {
         outputFolder = url
         persistOutput(url)
+    }
+
+    public func toggleSlides() {
+        guard !isRecording else { return }
+        slidesOn.toggle()
+        persistSlides(slidesOn)
     }
 
     public func deliveryDone(failure: String?) {
@@ -211,6 +229,7 @@ public final class RecorderModel {
 
     public func stopAndFinalize() async {
         saveComment()
+        slides?.stop()
         finalizing = true
         let engine = self.engine
         guard let dir = await Task.detached(operation: { engine.stop() }).value else {
@@ -229,13 +248,13 @@ public final class RecorderModel {
     public func menuClosed() {
         saveComment()
         guard warning != nil else { return }
-        recoveryNotes = []
+        notices = []
         if phase == .idle, !finalizing { stopErrorSeen = true }
         tick()
     }
 
     public func recoveryFailed(_ dir: URL, _ error: any Error) {
-        recoveryNotes.append("Could not finish \(dir.lastPathComponent): \(error)")
+        notices.append("Could not finish \(dir.lastPathComponent): \(error)")
         tick()
     }
 
@@ -243,6 +262,7 @@ public final class RecorderModel {
         guard !starting else { return }
         let status = engine.status(at: now)
         let stoppedItself = phase != .idle && status.phase == .idle && !finalizing
+        if status.phase == .idle { slides?.stop() }
         phase = status.phase
         elapsed = Self.format(seconds: status.phase == .idle ? 0 : status.elapsedSeconds)
         var notes: [String] = []
@@ -287,10 +307,15 @@ public final class RecorderModel {
             case .unavailable: notes.insert("No microphone available", at: 0)
             }
         }
+        switch slides?.status {
+        case .noPermission: notes.append("Screen: no permission (Privacy & Security > Screen & System Audio Recording)")
+        case .failed(let why): notes.append("Screen: \(why)")
+        case .on, nil: break
+        }
         if let note = status.diskWarning { notes.append(note) }
         if let error = status.lastError, !stopErrorSeen { notes.append("stopped: \(error)") }
         if let deliveryNote { notes.append("Saved in the local folder: \(deliveryNote)") }
-        notes += recoveryNotes
+        notes += notices
         warning = notes.isEmpty ? nil : notes.joined(separator: "; ")
         if stoppedItself, let dir = engine.lastSessionDir, dir != finalizedDir {
             finalizeSession(dir)
@@ -323,6 +348,9 @@ public final class RecorderModel {
                 lastSessionDir = dir
                 errorText = "finalize failed: \(error)"
             }
+            if let done = lastSessionDir, let why = (try? SessionManifest.load(from: done))?.finalize?.slidesError {
+                notices.append("Slides video failed: \(why)")
+            }
             finalizing = false
             finalizeTask = nil
             tick()
@@ -352,12 +380,14 @@ public final class RecorderModel {
         }
         let engine = self.engine
         let startSpecs = specs
+        let recordSlides = slidesOn && slides != nil
         starting = true
         let now = Date()
         let events = await calendar.events(from: now, to: now.addingTimeInterval(CalendarEvent.lookahead))
         let title = CalendarEvent.pickTitle(events, at: now)
         do {
-            _ = try await Task.detached { try engine.start(specs: startSpecs, title: title) }.value
+            _ = try await Task.detached { try engine.start(specs: startSpecs, title: title, slides: recordSlides) }.value
+            if recordSlides { slides?.start { try engine.addFrame(atNanos: $0, data: $1) } }
             self.title = title
             sessionMics = startSpecs.filter { $0.kind == .mic }
             stopErrorSeen = false
