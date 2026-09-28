@@ -50,6 +50,7 @@ public final class SessionRecorder: @unchecked Sendable {
     private var lastError: String?
     private var lastDiskCheck: Date?
     private var diskWarning: String?
+    private var slides = false
     public private(set) var lastSessionDir: URL?
 
     public init(
@@ -71,7 +72,7 @@ public final class SessionRecorder: @unchecked Sendable {
     }
 
     @discardableResult
-    public func start(specs: [SourceSpec], title: String = "", at date: Date = Date()) throws -> URL {
+    public func start(specs: [SourceSpec], title: String = "", slides: Bool = false, at date: Date = Date()) throws -> URL {
         lock.lock(); defer { lock.unlock() }
         guard state.phase == .idle else { throw RecorderError.busy }
         guard !specs.isEmpty else { throw RecorderError.noSources }
@@ -111,6 +112,7 @@ public final class SessionRecorder: @unchecked Sendable {
         lastError = nil
         lastDiskCheck = nil
         diskWarning = nil
+        self.slides = slides
         _ = state.start()
         sleepWatcher = SleepWatcher(
             willSleep: { [weak self] in self?.forEachSource { $0.pause() } },
@@ -172,6 +174,19 @@ public final class SessionRecorder: @unchecked Sendable {
 
     public func setTitle(_ title: String) { _ = edit { $0.title = title } }
 
+    @discardableResult
+    public func addFrame(atNanos: UInt64, data: Data) throws -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard state.phase == .recording, var manifest, let dir else { return false }
+        let frame = manifest.addFrame(atNanos: atNanos)
+        let url = dir.appendingPathComponent(frame.file)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        self.manifest = manifest
+        try manifest.save(to: dir)
+        return true
+    }
+
     private func edit(_ change: (inout SessionManifest) -> Void) -> SessionManifest? {
         lock.lock(); defer { lock.unlock() }
         guard state.phase == .recording, var manifest, let dir else { return nil }
@@ -214,7 +229,8 @@ public final class SessionRecorder: @unchecked Sendable {
         lastDiskCheck = now
         guard let free = try? freeBytes(dir) else { return nil }
         let left = DiskCheck.secondsLeft(
-            freeBytes: free, channels: sources.map(\.writer.channels), elapsedSeconds: now.timeIntervalSince(startedAt))
+            freeBytes: free, channels: sources.map(\.writer.channels), elapsedSeconds: now.timeIntervalSince(startedAt),
+            slides: slides)
         diskWarning = left < DiskCheck.warnSeconds
             ? "disk space low: about \(max(0, Int(left / 60))) min of recording left" : nil
         return left < DiskCheck.stopSeconds ? free : nil

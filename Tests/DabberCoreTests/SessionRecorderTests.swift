@@ -154,6 +154,19 @@ private let specs = [
         #expect(try SessionManifest.load(from: dir).title == "Планёрка ")
     }
 
+    @Test func framesAreWrittenAndSavedToTheManifestAtOnce() throws {
+        let (r, _) = try recorder()
+        let dir = try r.start(specs: specs, slides: true)
+        let start = try SessionManifest.load(from: dir).sessionStartNanos
+        #expect(try r.addFrame(atNanos: start + 2_000_000_000, data: Data([1, 2, 3])))
+        #expect(try SessionManifest.load(from: dir).frames == [FrameRecord(offsetNanos: 2_000_000_000, file: "frames/2000000000.heic")])
+        #expect(try Data(contentsOf: dir.appendingPathComponent("frames/2000000000.heic")) == Data([1, 2, 3]))
+        _ = r.stop()
+        #expect(try !r.addFrame(atNanos: start + 4_000_000_000, data: Data([4])))
+        #expect(try SessionManifest.load(from: dir).frames.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("frames/4000000000.heic").path))
+    }
+
     @Test func stopWithoutStartReturnsNil() throws {
         let (r, _) = try recorder()
         #expect(r.stop() == nil)
