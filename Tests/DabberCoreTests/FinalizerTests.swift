@@ -208,6 +208,21 @@ extension FinalizerTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".caf") }.isEmpty)
     }
 
+    @Test func aSegmentThatBreaksWhileReadingKeepsItsStartAndIsReported() throws {
+        let dir = try makeSession()
+        let url = dir.appendingPathComponent("mic - A.seg000.caf")
+        let size = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as! Int
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: UInt64(size / 2))
+        try handle.close()
+        let report = try Finalizer.run(dir)
+        #expect(report.totalFrames == 144_000)
+        #expect(report.unreadable == ["mic - A.seg000.caf"])
+        #expect(try rms(dir.appendingPathComponent("mic - A.m4a"), from: 5_000, frames: 4_800) > 0.2)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        #expect(try SessionManifest.load(from: dir).finalize == report)
+    }
+
     @Test func unreadableSegmentIsSkippedKeptAndReported() throws {
         let dir = try makeSession()
         try Data(repeating: 1, count: 100).write(to: dir.appendingPathComponent("mic - A.seg001.caf"))

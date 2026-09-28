@@ -4,6 +4,7 @@ public final class CAFSegment: SegmentSource {
     public let url: URL
     public let frames: Int
     public let channels: Int
+    public private(set) var damaged = false
     private var file: AVAudioFile?
     private var buffer: AVAudioPCMBuffer?
 
@@ -31,7 +32,12 @@ public final class CAFSegment: SegmentSource {
         while pos < end {
             let n = min(48_000, end - pos)
             file.framePosition = AVAudioFramePosition(pos)
-            try file.read(into: buffer, frameCount: AVAudioFrameCount(n))
+            do {
+                try file.read(into: buffer, frameCount: AVAudioFrameCount(n))
+            } catch {
+                damaged = true
+                break
+            }
             let got = Int(buffer.frameLength)
             if got == 0 { break }
             out.append(contentsOf: UnsafeBufferPointer(start: buffer.floatChannelData![0], count: got * channels))

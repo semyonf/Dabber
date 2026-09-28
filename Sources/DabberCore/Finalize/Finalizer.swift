@@ -19,6 +19,7 @@ public enum Finalizer {
         var tracks: [Track] = []
         var rendered: [String] = []
         var unreadable: [String] = []
+        var cafs: [CAFSegment] = []
         for source in manifest.sources {
             var present: [SegmentRecord] = []
             var files: [CAFSegment] = []
@@ -32,6 +33,7 @@ public enum Finalizer {
                 present.append(record)
                 files.append(caf)
             }
+            cafs += files
             let plans = FinalizePlan.make(present, fileFrames: files.map(\.frames))
             let planned = Set(plans.map(\.file))
             rendered += plans.map(\.file)
@@ -74,6 +76,7 @@ public enum Finalizer {
             try ChapterWriter.write(chapters, title: manifest.name, into: mix.url)
             slidesError = slideshow(manifest, dir: dir, chapters: chapters)
         }
+        unreadable += cafs.filter(\.damaged).map(\.url.lastPathComponent)
         var gaps: [GapRecord] = []
         var drift: [String: Double] = [:]
         var resampled: [String] = []
@@ -89,7 +92,7 @@ public enum Finalizer {
             unreadable: unreadable.isEmpty ? nil : unreadable)
         manifest.finalize = report
         try manifest.save(to: dir)
-        for name in rendered {
+        for name in rendered where !unreadable.contains(name) {
             try FileManager.default.removeItem(at: dir.appendingPathComponent(name))
         }
         if FileManager.default.fileExists(atPath: dir.appendingPathComponent(videoFile).path) {
