@@ -38,6 +38,8 @@ The user plays the 10-minute sample `sample.mp4` (handed over in chat) in QuickT
 
 ## Decisions
 
+- `WriterFeed.run(writer)` cancels the writer when a lane fails or the feed times out, so no partial file is left (found by the Task 4 code review, fixed in Task 5, verified with a broken second frame).
+
 - Capture: every 2 s, sleeping 2 s after each grab, so a slow grab never queues another. The capture time is the host clock read before the grab. The display is the one under the mouse pointer; ScreenCaptureKit is asked for the picture already scaled to at most 1920 wide (even sides), so `Frames.scaled` is only a safety net.
 - Change rule: 64x36 gray thumbnail; changed when at least 4 thumbnail pixels differ by more than 24 of 255, or the display changed. Tested: a 2x20 px caret and a 60x12 px clock-sized area do not count, a 50x50 px area and a new slide do. The constants are `Frames.pixelDelta` and `Frames.changedPixels`; Task 11 checks them on real screens.
 - Files: `frames/<offsetNanos>.heic`, quality 0.8. The manifest is saved after each kept frame.
@@ -801,11 +803,13 @@ git commit -m "refactor: shared writer feed, audio passthrough and chapter lane"
 ### Task 5: Slideshow writer
 
 **Files:**
+- Modify: `Sources/DabberCore/Finalize/ChapterWriter.swift`
 - Create: `Sources/DabberCore/Finalize/SlideshowWriter.swift`
+- Modify: `Sources/DabberCore/Finalize/WriterFeed.swift`
 - Modify: `Sources/DabberCore/Slides/Frames.swift`
 - Modify: `Tests/DabberCoreTests/FinalizerTests.swift`
 
-`SlideshowWriter.write` makes the `.mp4`: HEVC video (`hvc1`), audio copied from the mix, chapters linked from both tracks, the title tag. One video sample per frame at its time, a black sample at 0 if the first frame is later, frames at or after the end of the audio dropped, of two frames with the same time the later wins. The size is the first frame's; other sizes are letterboxed. Frame reordering is off (without it the encoder stored the samples as 0, 2, 1) and a key frame comes at least every 60 s of media time, so seeking stays fast.
+`SlideshowWriter.write` makes the `.mp4`: HEVC video (`hvc1`), audio copied from the mix, chapters linked from both tracks, the title tag. One video sample per frame at its time, a black sample at 0 if the first frame is later, frames at or after the end of the audio dropped, of two frames with the same time the later wins. The size is the first frame's; other sizes are letterboxed. Frame reordering is off (without it the encoder stored the samples as 0, 2, 1) and a key frame comes at least every 60 s of media time, so seeking stays fast. It also changes `WriterFeed.run` to take the writer and cancel it on a failed lane or a timeout (a code review of Task 4 found that a throwing lane skipped `cancelWriting()`, which left a partial `.mp4` behind; the new test case for a broken second frame proves the file is gone). Both writers call `try WriterFeed(...).run(writer)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -818,7 +822,7 @@ git commit -m "refactor: shared writer feed, audio passthrough and chapter lane"
  import AudioToolbox
  import Foundation
  import Testing
-@@ -492,3 +493,83 @@ extension FinalizerTests {
+@@ -492,3 +493,91 @@ extension FinalizerTests {
          #expect(try FileManager.default.contentsOfDirectory(atPath: work.path).isEmpty)
      }
  }
@@ -900,6 +904,14 @@ git commit -m "refactor: shared writer feed, audio passthrough and chapter lane"
 +        #expect(throws: FrameError.self) {
 +            try SlideshowWriter.write(audio: audio, slides: [missing], chapters: [], title: nil, to: dir.appendingPathComponent("mix.mp4"))
 +        }
++        let good = try slide(dir, atSeconds: 0, screen())
++        let broken = dir.appendingPathComponent("broken.heic")
++        try Data([1, 2, 3]).write(to: broken)
++        let out = dir.appendingPathComponent("mix.mp4")
++        #expect(throws: FrameError.self) {
++            try SlideshowWriter.write(audio: audio, slides: [good, Slide(offsetNanos: 500_000_000, url: broken)], chapters: [], title: nil, to: out)
++        }
++        #expect(!FileManager.default.fileExists(atPath: out.path))
 +    }
 +}
 ```
@@ -911,6 +923,23 @@ Run: `scripts/test.sh; echo "exit=$?"`
 Expected: build error: cannot find `Slide`, `SlideshowWriter` and `SlideshowError` in scope. `exit=1`.
 
 - [ ] **Step 3: Implement**
+
+`Sources/DabberCore/Finalize/ChapterWriter.swift`:
+
+```diff
+@@ -32,10 +32,7 @@ public enum ChapterWriter {
+         let text = try chapterLane(chapters, end: end, writer: writer, linkedFrom: [audio])
+         guard writer.startWriting() else { throw ChapterError.write(name, "\(writer.error.map { "\($0)" } ?? "start")") }
+         writer.startSession(atSourceTime: .zero)
+-        guard try WriterFeed([source.lane(audio)] + (text.map { [$0] } ?? [])).run() else {
+-            writer.cancelWriting()
+-            throw ChapterError.write(name, "timed out")
+-        }
++        try WriterFeed([source.lane(audio)] + (text.map { [$0] } ?? [])).run(writer)
+         writer.endSession(atSourceTime: end)
+         let done = DispatchSemaphore(value: 0)
+         writer.finishWriting { done.signal() }
+```
 
 `Sources/DabberCore/Finalize/SlideshowWriter.swift` (new file):
 
@@ -977,10 +1006,7 @@ public enum SlideshowWriter {
         })
         guard writer.startWriting() else { throw SlideshowError.write("\(writer.error.map { "\($0)" } ?? "start")") }
         writer.startSession(atSourceTime: .zero)
-        guard try WriterFeed([pictures, source.lane(sound)] + (text.map { [$0] } ?? [])).run() else {
-            writer.cancelWriting()
-            throw SlideshowError.write("timed out")
-        }
+        try WriterFeed([pictures, source.lane(sound)] + (text.map { [$0] } ?? [])).run(writer)
         writer.endSession(atSourceTime: end)
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }
@@ -1024,6 +1050,42 @@ public enum SlideshowWriter {
         return sample
     }
 }
+```
+
+`Sources/DabberCore/Finalize/WriterFeed.swift`:
+
+```diff
+@@ -1,5 +1,9 @@
+ import AVFoundation
+ 
++struct FeedTimedOut: Error, CustomStringConvertible {
++    var description: String { "timed out" }
++}
++
+ final class WriterFeed: @unchecked Sendable {
+     typealias Lane = (input: AVAssetWriterInput, next: () throws -> CMSampleBuffer?)
+ 
+@@ -12,14 +16,16 @@ final class WriterFeed: @unchecked Sendable {
+         self.lanes = lanes
+     }
+ 
+-    func run(timeout: TimeInterval = 600) throws -> Bool {
++    func run(_ writer: AVAssetWriter, timeout: TimeInterval = 600) throws {
+         for i in lanes.indices {
+             group.enter()
+             lanes[i].input.requestMediaDataWhenReady(on: DispatchQueue(label: "dabber.feed.\(i)")) { self.feed(i) }
+         }
+-        guard group.wait(timeout: .now() + timeout) == .success else { return false }
+-        if let failure = lock.withLock({ failure }) { throw failure }
+-        return true
++        let done = group.wait(timeout: .now() + timeout) == .success
++        if let error = lock.withLock({ failure }) ?? (done ? nil : FeedTimedOut()) {
++            writer.cancelWriting()
++            throw error
++        }
+     }
+ 
+     private func feed(_ i: Int) {
 ```
 
 `Sources/DabberCore/Slides/Frames.swift`:
@@ -1075,7 +1137,7 @@ Expected: `Test run with 245 tests in 2 suites passed`, `exit=0`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add "Sources/DabberCore/Finalize/SlideshowWriter.swift" "Sources/DabberCore/Slides/Frames.swift" "Tests/DabberCoreTests/FinalizerTests.swift"
+git add "Sources/DabberCore/Finalize/ChapterWriter.swift" "Sources/DabberCore/Finalize/SlideshowWriter.swift" "Sources/DabberCore/Finalize/WriterFeed.swift" "Sources/DabberCore/Slides/Frames.swift" "Tests/DabberCoreTests/FinalizerTests.swift"
 git diff --cached --stat
 git commit -m "feat: slideshow writer builds an HEVC mp4 from frames and the mix"
 ```
@@ -1125,8 +1187,8 @@ After the mix has its chapters, `Finalizer.run` makes `mix.mp4` from the frames 
 `Tests/DabberCoreTests/FinalizerTests.swift`:
 
 ```diff
-@@ -573,3 +573,45 @@ extension FinalizerTests {
-         }
+@@ -581,3 +581,45 @@ extension FinalizerTests {
+         #expect(!FileManager.default.fileExists(atPath: out.path))
      }
  }
 +
