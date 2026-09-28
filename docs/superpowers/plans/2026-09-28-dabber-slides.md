@@ -26,7 +26,7 @@ Spec: `docs/superpowers/specs/2026-09-28-dabber-screenshots-video-design.md`. Fo
 ## Facts checked for this plan
 
 The complete code of this plan was applied task by task to a clone of this branch at `af8dd1a` outside the repo, one commit per task (on 2026-09-28, macOS 26.7, Swift 6.4 CLT):
-- `scripts/test.sh` exit 0 after every task, with 236, 241, 242, 242, 245, 249, 253, 258, 258, 258 tests. The `SlideRecorder` tests passed 5 runs out of 5; the whole suite 3 out of 3 after Task 8. Tasks 5 and 6 include two fixes found by the per-task code reviews during execution (writer cancel on a failed feed; frames kept when no video was made).
+- `scripts/test.sh` exit 0 after every task, with 236, 241, 242, 242, 245, 249, 254, 259, 259, 259 tests. The `SlideRecorder` tests passed 300 repetitions; the whole suite 3 out of 3 after Task 8. Tasks 5, 6 and 7 include three fixes found by the per-task code reviews during execution (writer cancel on a failed feed; frames kept when no video was made; no stale capture status after stop and a retry after a failed store).
 - `swift build` printed no Swift warnings. `scripts/build-app.sh` built and signed `build/Dabber.app`.
 - A 10-minute sample made with `SlideshowWriter` (frames at 0:00, 4:00, 8:00; tones 220, 440, 660 Hz; chapters "Start", "Слайд 2", "Слайд 3"), checked with ffprobe:
   `codec_name=hevc|codec_tag_string=hvc1|width=1920|height=1080|duration=600.000000`, `codec_name=aac|codec_tag_string=mp4a|duration=600.000000`, a `tx3g` stream, the three chapters with exact times and UTF-8 titles, video packets `0.000000,K__`, `240.000000,K__`, `480.000000,K__`. File size 15.5 MB, of which the audio is 15.5 MB.
@@ -1372,7 +1372,7 @@ git commit -m "feat: finalize builds the slideshow video from stored frames"
 - Create: `Sources/DabberCore/Slides/SlideRecorder.swift`
 - Create: `Tests/DabberCoreTests/SlideRecorderTests.swift`
 
-`SlideRecorder` runs the capture loop off the main thread: read the host clock, grab, offer to a `FrameSampler`, store the changed frame, sleep 2 s. Sleeping after each grab means grabs never queue up. Without permission it does nothing and reports `.noPermission`; a failed grab reports `.failed` until the next good one. `ScreenGrabber` is the seam for the real ScreenCaptureKit code in the app.
+`SlideRecorder` runs the capture loop off the main thread: read the host clock, grab, offer to a `FrameSampler`, store the changed frame, sleep 2 s. Sleeping after each grab means grabs never queue up. Without permission it does nothing and reports `.noPermission`; a failed grab reports `.failed` until the next good one. `ScreenGrabber` is the seam for the real ScreenCaptureKit code in the app. A status set by a cancelled loop is ignored, so `stop()` always leaves `nil` behind (the Task 7 review reproduced a stale `.on` about once in 230 runs). After any error the sampler is reset, so the same screen is stored again once the disk is back. `deinit` cancels the loop.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1393,6 +1393,8 @@ private final class FakeGrabber: ScreenGrabber, @unchecked Sendable {
     let permitted: Bool
     private let lock = NSLock()
     private var queue: [Result<ScreenGrab, GrabFailed>]
+    private var grabs = 0
+    var grabCount: Int { lock.withLock { grabs } }
 
     init(permitted: Bool = true, _ queue: [Result<ScreenGrab, GrabFailed>]) {
         self.permitted = permitted
@@ -1402,7 +1404,10 @@ private final class FakeGrabber: ScreenGrabber, @unchecked Sendable {
     func allowed() -> Bool { permitted }
 
     func grab() async throws -> ScreenGrab {
-        let next = lock.withLock { queue.count > 1 ? queue.removeFirst() : queue.first }
+        let next = lock.withLock {
+            grabs += 1
+            return queue.count > 1 ? queue.removeFirst() : queue.first
+        }
         guard let next else { throw GrabFailed() }
         return try next.get()
     }
@@ -1414,6 +1419,18 @@ private final class Store: @unchecked Sendable {
     var count: Int { lock.withLock { items.count } }
     var times: [UInt64] { lock.withLock { items.map(\.0) } }
     func add(_ at: UInt64, _ data: Data) -> Bool { lock.withLock { items.append((at, data)) }; return true }
+}
+
+private final class FailOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failed = false
+    func check() throws {
+        let first = lock.withLock { () -> Bool in
+            defer { failed = true }
+            return !failed
+        }
+        if first { throw GrabFailed() }
+    }
 }
 
 private func ticking() -> @Sendable () -> UInt64 {
@@ -1463,8 +1480,24 @@ private func ticking() -> @Sendable () -> UInt64 {
     slides.start { store.add($0, $1) }
     #expect(waitUntil { store.count == 2 })
     slides.stop()
+    Thread.sleep(forTimeInterval: 0.02)
+    let grabs = grabber.grabCount
     Thread.sleep(forTimeInterval: 0.05)
+    #expect(grabber.grabCount == grabs)
     #expect(store.count == 2)
+    #expect(slides.status == nil)
+}
+
+@Test func aFailedStoreIsRetriedWithTheSameScreen() {
+    let slides = SlideRecorder(grabber: FakeGrabber([.success(ScreenGrab(image: screen(), display: 1))]), interval: .milliseconds(5))
+    let store = Store()
+    let once = FailOnce()
+    slides.start { at, data in
+        try once.check()
+        return store.add(at, data)
+    }
+    #expect(waitUntil { store.count == 1 })
+    slides.stop()
 }
 ```
 
@@ -1522,6 +1555,10 @@ public final class SlideRecorder: @unchecked Sendable {
         self.clock = clock
     }
 
+    deinit {
+        task?.cancel()
+    }
+
     public var status: ScreenStatus? { lock.withLock { current } }
 
     public func start(store: @escaping @Sendable (UInt64, Data) throws -> Bool) {
@@ -1530,14 +1567,18 @@ public final class SlideRecorder: @unchecked Sendable {
         set(.on)
         let (grabber, interval, clock) = (self.grabber, self.interval, self.clock)
         let task = Task.detached { [weak self] in
-            let sampler = FrameSampler()
+            var sampler = FrameSampler()
             while !Task.isCancelled {
                 let at = clock()
                 do {
                     let grab = try await grabber.grab()
-                    if let data = try sampler.offer(grab.image, display: grab.display) { _ = try store(at, data) }
+                    guard !Task.isCancelled else { break }
+                    if let data = try sampler.offer(grab.image, display: grab.display) {
+                        _ = try store(at, data)
+                    }
                     self?.set(.on)
                 } catch {
+                    sampler = FrameSampler()
                     self?.set(.failed("\(error)"))
                 }
                 try? await Task.sleep(for: interval)
@@ -1555,7 +1596,7 @@ public final class SlideRecorder: @unchecked Sendable {
     }
 
     private func set(_ status: ScreenStatus) {
-        lock.withLock { current = status }
+        lock.withLock { if !Task.isCancelled { current = status } }
     }
 }
 ```
@@ -1564,7 +1605,7 @@ public final class SlideRecorder: @unchecked Sendable {
 
 Run: `scripts/test.sh; echo "exit=$?"`
 
-Expected: `Test run with 253 tests in 2 suites passed`, `exit=0`.
+Expected: `Test run with 254 tests in 2 suites passed`, `exit=0`.
 
 - [ ] **Step 5: Commit**
 
@@ -1890,7 +1931,7 @@ Expected: build error: `FakeEngine` does not conform to `RecordingEngine`, `Reco
 
 Run: `scripts/test.sh; echo "exit=$?"`
 
-Expected: `Test run with 258 tests in 2 suites passed`, `exit=0`.
+Expected: `Test run with 259 tests in 2 suites passed`, `exit=0`.
 
 - [ ] **Step 5: Commit**
 
@@ -2058,7 +2099,7 @@ struct LiveScreenGrabber: ScreenGrabber {
 
 Run: `scripts/test.sh; echo "exit=$?"`
 
-Expected: `Test run with 258 tests in 2 suites passed`, `exit=0`. Then run `scripts/build-app.sh; echo "exit=$?"`. Expected: `Build complete!`, a `designated => identifier "local.dabber.Dabber"` line, `exit=0`.
+Expected: `Test run with 259 tests in 2 suites passed`, `exit=0`. Then run `scripts/build-app.sh; echo "exit=$?"`. Expected: `Build complete!`, a `designated => identifier "local.dabber.Dabber"` line, `exit=0`.
 
 - [ ] **Step 3: Commit**
 
@@ -2227,7 +2268,7 @@ Both READMEs: the feature bullet, disk use, the Screen Recording permission, the
 
 Run: `scripts/test.sh; echo "exit=$?"`
 
-Expected: `Test run with 258 tests in 2 suites passed`, `exit=0`.
+Expected: `Test run with 259 tests in 2 suites passed`, `exit=0`.
 
 - [ ] **Step 3: Commit**
 
