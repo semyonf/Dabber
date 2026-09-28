@@ -501,6 +501,21 @@ extension FinalizerTests {
         return Slide(offsetNanos: UInt64(s * 1e9), url: url)
     }
 
+    private func videoKeyFrames(_ url: URL) throws -> [Bool] {
+        let movie = AVMovie(url: url)
+        let reader = try AVAssetReader(asset: movie)
+        let output = AVAssetReaderTrackOutput(track: movie.tracks.first { $0.mediaType == .video }!, outputSettings: nil)
+        reader.add(output)
+        #expect(reader.startReading())
+        var keys: [Bool] = []
+        while let buffer = output.copyNextSampleBuffer() {
+            guard buffer.numSamples > 0 else { continue }
+            let attachments = CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: false) as? [[CFString: Any]]
+            keys.append(!(attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool ?? false))
+        }
+        return keys
+    }
+
     private func videoTimes(_ url: URL) throws -> [Double] {
         let movie = AVMovie(url: url)
         let reader = try AVAssetReader(asset: movie)
@@ -514,13 +529,13 @@ extension FinalizerTests {
         return times
     }
 
-    @Test func slideTimesStartBlackDropLateFramesAndKeepTheLaterOfTwins() {
+    @Test func slideTimesStartWithTheFirstFrameDropLateFramesAndKeepTheLaterOfTwins() {
         let a = URL(fileURLWithPath: "/a"), b = URL(fileURLWithPath: "/b"), c = URL(fileURLWithPath: "/c")
         let times = SlideshowWriter.times(
             [Slide(offsetNanos: 2_000, url: b), Slide(offsetNanos: 1_000, url: a), Slide(offsetNanos: 2_000, url: c), Slide(offsetNanos: 9_000, url: a)],
             endNanos: 5_000)
-        #expect(times.map(\.atNanos) == [0, 1_000, 2_000])
-        #expect(times.map(\.slide?.url) == [nil, a, c])
+        #expect(times.map(\.atNanos) == [0, 2_000])
+        #expect(times.map(\.slide.url) == [a, c])
         #expect(SlideshowWriter.times([Slide(offsetNanos: 0, url: a)], endNanos: 5_000).map(\.atNanos) == [0])
         #expect(SlideshowWriter.times([], endNanos: 5_000).isEmpty)
     }
@@ -540,7 +555,8 @@ extension FinalizerTests {
         try SlideshowWriter.write(
             audio: audio, slides: slides, chapters: [Chapter(startMillis: 0, title: "Start"), Chapter(startMillis: 1_500, title: "про деньги")],
             title: "Созвон", to: out)
-        #expect(try videoTimes(out) == [0, 1, 2])
+        #expect(try videoTimes(out) == [0, 2])
+        #expect(try videoKeyFrames(out) == [true, true])
         let asset = AVURLAsset(url: out)
         let track = try await asset.loadTracks(withMediaType: .video).first!
         let format = try await track.load(.formatDescriptions).first!
@@ -609,7 +625,7 @@ extension FinalizerTests {
         #expect(try audioBytes(video) == audioBytes(out.appendingPathComponent(name + ".m4a")))
         #expect(try await chapterList(video) == ["0.000 Start", "1.000 Mark 1"])
         #expect(try await titleTag(video) == name)
-        #expect(try videoTimes(video) == [0, 0.5, 1.5])
+        #expect(try videoTimes(video) == [0, 1.5])
     }
 
     @Test func aBrokenFrameKeepsTheAudioAndTheFramesAndReportsTheError() throws {

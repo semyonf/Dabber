@@ -150,7 +150,7 @@ when the screen has changed; a blinking text cursor or the menu bar clock does n
 in the picture.
 
 After Stop, Dabber makes `<name>.mp4` next to the mix: the same sound, HEVC video, 1920 pixels wide at most, the same
-chapters. Each kept screenshot is shown until the next one; the video is black until the first one. The screenshots
+chapters. Each kept screenshot is shown until the next one; the first one is shown from 0:00. The screenshots
 are deleted after the video is made. If the video could not be made, the menu says "Slides video failed: …", the
 audio files are complete as usual, and the screenshots stay in the `frames` folder of the recording (HEIC files named
 by nanoseconds since the start).

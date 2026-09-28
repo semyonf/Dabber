@@ -44,7 +44,8 @@ and builds a video where the mix audio plays and each changed screen stays until
 - Built with `AVAssetWriter` into `mix.mp4`, renamed to `<name>.mp4` together with the mix in `Finalizer.rename`.
 - Audio: the AAC samples of the mix `.m4a` are copied without re-encoding (passthrough).
 - Video: HEVC, tagged `hvc1` so QuickTime Player and iPhone play it. One video sample per stored frame at its capture time. Each sample lasts until the next frame; the
-  last one lasts until the end of the audio. A black frame covers 0:00 up to the first frame.
+  last one lasts until the end of the audio. The first frame is shown from 0:00. Every video sample is a key frame, so chapter
+  previews (QuickLook, QuickTime) and seeking land on the right picture.
 - Frame size: the first frame's size. Frames of another size (another monitor) are scaled to fit with black bars.
 - Chapters and the title tag: the same as the mix `.m4a` (reuse `ChapterWriter`).
 - After a successful build `frames/` is deleted. If the build fails, the `.m4a` files are still delivered, `frames/`

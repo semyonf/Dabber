@@ -26,13 +26,11 @@ public struct Slide: Equatable, Sendable {
 }
 
 public enum SlideshowWriter {
-    public static let keyFrameSeconds = 60.0
-
     public static func write(audio: URL, slides: [Slide], chapters: [Chapter], title: String?, to out: URL) throws {
         let frames = try AVAudioFile(forReading: audio).length
         let end = CMTime(value: frames, timescale: CMTimeScale(Timeline.rate))
         let shown = times(slides, endNanos: UInt64(frames) * 1_000_000_000 / UInt64(Timeline.rate))
-        guard let first = shown.first(where: { $0.slide != nil })?.slide else { throw SlideshowError.noFrames }
+        guard let first = shown.first?.slide else { throw SlideshowError.noFrames }
         let firstImage = try Frames.decode(first.url)
         let size = Frames.fitSize(width: firstImage.width, height: firstImage.height)
         let source = try AudioPassthrough(audio)
@@ -42,7 +40,7 @@ public enum SlideshowWriter {
         let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.hevc, AVVideoWidthKey: size.width, AVVideoHeightKey: size.height,
             AVVideoCompressionPropertiesKey: [
-                AVVideoAllowFrameReorderingKey: false, AVVideoMaxKeyFrameIntervalDurationKey: keyFrameSeconds,
+                AVVideoAllowFrameReorderingKey: false, AVVideoMaxKeyFrameIntervalKey: 1,
             ],
         ])
         writer.add(video)
@@ -55,8 +53,7 @@ public enum SlideshowWriter {
             let item = shown[index]
             index += 1
             let next = index < shown.count ? time(shown[index].atNanos) : end
-            let image = try item.slide.map { try Frames.decode($0.url) }
-            return try sample(image, width: size.width, height: size.height, at: time(item.atNanos), until: next)
+            return try sample(Frames.decode(item.slide.url), width: size.width, height: size.height, at: time(item.atNanos), until: next)
         })
         guard writer.startWriting() else { throw SlideshowError.write("\(writer.error.map { "\($0)" } ?? "start")") }
         writer.startSession(atSourceTime: .zero)
@@ -70,19 +67,18 @@ public enum SlideshowWriter {
         }
     }
 
-    static func times(_ slides: [Slide], endNanos: UInt64) -> [(atNanos: UInt64, slide: Slide?)] {
-        var out: [(atNanos: UInt64, slide: Slide?)] = []
+    static func times(_ slides: [Slide], endNanos: UInt64) -> [(atNanos: UInt64, slide: Slide)] {
+        var out: [(atNanos: UInt64, slide: Slide)] = []
         for slide in slides.sorted(by: { $0.offsetNanos < $1.offsetNanos }) where slide.offsetNanos < endNanos {
-            if out.last?.atNanos == slide.offsetNanos { out.removeLast() }
-            out.append((slide.offsetNanos, slide))
+            if out.last?.slide.offsetNanos == slide.offsetNanos { out.removeLast() }
+            out.append((out.isEmpty ? 0 : slide.offsetNanos, slide))
         }
-        if out.first.map({ $0.atNanos > 0 }) ?? false { out.insert((0, nil), at: 0) }
         return out
     }
 
     private static func time(_ nanos: UInt64) -> CMTime { CMTime(value: CMTimeValue(nanos), timescale: 1_000_000_000) }
 
-    private static func sample(_ image: CGImage?, width: Int, height: Int, at start: CMTime, until next: CMTime) throws -> CMSampleBuffer {
+    private static func sample(_ image: CGImage, width: Int, height: Int, at start: CMTime, until next: CMTime) throws -> CMSampleBuffer {
         var buffer: CVPixelBuffer?
         let attrs: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary]
         var status = CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &buffer)
