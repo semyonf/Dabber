@@ -79,6 +79,8 @@ struct RecordingSection: View {
                     if row.showsLevel { LevelBar(db: row.levelDb, warn: row.silent) }
                 }
             }
+            Toggle("Record slides", isOn: Binding(get: { model.slidesOn }, set: { _ in model.toggleSlides() }))
+                .disabled(model.isRecording)
             if model.isRecording {
                 HStack {
                     Text("Name").font(.caption).foregroundStyle(.secondary)

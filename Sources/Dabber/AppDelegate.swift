@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let namesKey = "sourceNames"
     private static let outputKey = "outputFolder"
     private static let legacyKey = "legacySessionsAdopted"
+    private static let slidesKey = "recordSlides"
 
     @MainActor static let model = RecorderModel(
         engine: SessionRecorder(root: AppPaths.workRoot, appVersion: AppPaths.version),
@@ -19,7 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         calendar: EventKitCalendar(),
         outputFolder: UserDefaults.standard.string(forKey: outputKey).map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? AppPaths.recordingsRoot,
-        persistOutput: { UserDefaults.standard.set($0.path, forKey: outputKey) })
+        persistOutput: { UserDefaults.standard.set($0.path, forKey: outputKey) },
+        slides: SlideRecorder(grabber: LiveScreenGrabber()),
+        slidesOn: UserDefaults.standard.bool(forKey: slidesKey),
+        persistSlides: { UserDefaults.standard.set($0, forKey: slidesKey) })
 
     private static let feedKey = "virtualMic"
 

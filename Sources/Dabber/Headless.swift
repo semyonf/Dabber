@@ -178,6 +178,7 @@ enum Headless {
             var seconds = 0.0
             var marks: [(at: Double, text: String)] = []
             var title: String?
+            var slides = false
             var output = AppPaths.recordingsRoot
             var work = AppPaths.workRoot
             var i = 1
@@ -217,6 +218,8 @@ enum Headless {
                     let parts = args[i].split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
                     guard let at = Double(parts[0]) else { return 64 }
                     marks.append((at, parts.count > 1 ? String(parts[1]) : ""))
+                case "--slides":
+                    slides = true
                 case "--title":
                     i += 1
                     guard i < args.count else { return 64 }
@@ -233,8 +236,10 @@ enum Headless {
                     ? SourceSpec(kind: s.kind, uid: s.uid, name: s.name, excludedBundleIDs: excluded) : s
             }
             let recorder = SessionRecorder(root: work, appVersion: AppPaths.version)
-            let dir = try recorder.start(specs: specs)
+            let dir = try recorder.start(specs: specs, slides: slides)
             log.line("SESSION \(dir.path)")
+            let grabber = SlideRecorder(grabber: LiveScreenGrabber())
+            if slides { grabber.start { try recorder.addFrame(atNanos: $0, data: $1) } }
             if let title {
                 recorder.setTitle(title)
                 log.line("TITLE \(title)")
@@ -247,7 +252,8 @@ enum Headless {
                 let parts = status.sources.map { s in
                     "\(s.spec.name): \(s.status) \(String(format: "%.1f", s.levelDb)) dB" + (s.silent ? " SILENT" : "")
                 }
-                log.line("t=\(Int(status.elapsedSeconds)) \(status.phase) | " + parts.joined(separator: " | "))
+                log.line("t=\(Int(status.elapsedSeconds)) \(status.phase) | " + parts.joined(separator: " | ")
+                    + (slides ? " | screen: \(grabber.status.map { "\($0)" } ?? "off")" : ""))
                 if status.phase != .recording {
                     log.line("ERROR recording stopped: \(status.lastError ?? "unknown")")
                     break
@@ -260,10 +266,17 @@ enum Headless {
                     }
                 }
             }
+            grabber.stop()
             guard let stopped = recorder.stop() ?? recorder.lastSessionDir else { return 1 }
             log.line("STOPPED \(stopped.path)")
+            if slides {
+                let frames = (try? SessionManifest.load(from: stopped))?.frames ?? []
+                let bytes = frames.compactMap { try? FileManager.default.attributesOfItem(atPath: stopped.appendingPathComponent($0.file).path)[.size] as? Int }
+                log.line("FRAMES \(frames.count) bytes=\(bytes.reduce(0, +))")
+            }
             let report = try Finalizer.run(stopped)
-            log.line("FINALIZED total=\(report.totalFrames) gaps=\(report.gaps.count) resampled=\(report.resampled.count)")
+            log.line("FINALIZED total=\(report.totalFrames) gaps=\(report.gaps.count) resampled=\(report.resampled.count)"
+                + (report.slidesError.map { " slidesError=\($0)" } ?? ""))
             let named = try Finalizer.rename(stopped)
             log.line("NAMED \(named.path)")
             try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
