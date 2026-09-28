@@ -249,6 +249,7 @@ public final class RecorderModel {
         finalizing = true
         let engine = self.engine
         let task = Task {
+            defer { stopTask = nil }
             guard let dir = await Task.detached(operation: { engine.stop() }).value else {
                 finalizing = finalizeTask != nil
                 return
@@ -257,7 +258,6 @@ public final class RecorderModel {
         }
         stopTask = task
         await task.value
-        stopTask = nil
     }
 
     public func prepareToQuit() async {
