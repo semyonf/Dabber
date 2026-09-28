@@ -11,6 +11,9 @@ Dabber is a small macOS menu bar app that records what your Mac plays and what y
   warning, so a lost microphone is noticed during the recording, not after it.
 - **Marks**: press Mark at an important moment and optionally type a comment. Marks become chapters in the
   recorded files and are also saved to `marks.txt`.
+- **Slides** (optional): with "Record slides" on, Dabber takes a screenshot every 2 seconds and, after Stop, makes a
+  video: the mix plays, and each change of the screen stays in the picture until the next change. No screen video
+  is recorded.
 - **Names from the calendar**: a recording is named after the calendar event that is on (or starts within 15 minutes).
   You can change the name while recording.
 - You choose the folder where finished recordings go.
@@ -33,7 +36,7 @@ Dabber is built from source on your Mac. There is no prebuilt download.
   not needed.
 - **Disk space:** about 1.5 GB for the Command Line Tools and up to about 1 GB for the build folders inside the
   repository. While recording, Dabber keeps uncompressed audio in a temporary folder: about 1.4 GB per hour for Mac
-  audio and about 0.7 GB per hour per microphone. A recording does not start with less than 2 GB free, and the menu
+  audio and about 0.7 GB per hour per microphone, plus up to about 180 MB per hour for slides. A recording does not start with less than 2 GB free, and the menu
   warns when less than about 20 minutes of recording space is left. Finished files are much smaller (compressed AAC).
 
 ### Permissions the app asks for
@@ -42,6 +45,7 @@ Dabber is built from source on your Mac. There is no prebuilt download.
 | --- | --- | --- |
 | Microphone | First recording (or virtual mic use) with a microphone | To record your microphones |
 | System Audio Recording | First recording (or virtual mic use) with Mac audio | To record sound played by other apps |
+| Screen Recording | First recording with Record slides on | To take the screenshots for the slides video |
 | Calendars (full access) | First recording | To read the title of the current event and name the recording after it. Dabber only reads events. If you decline, recordings are named by date and time |
 
 ## Install
@@ -119,6 +123,7 @@ with that name already exists, a number is added. Inside:
   2026-09-24 14-00 Weekly sync.m4a   the mix of all sources (stereo)
   computer audio.m4a                 Mac audio (stereo)
   mic - MacBook Air Microphone.m4a   one file per microphone (mono)
+  2026-09-24 14-00 Weekly sync.mp4   only with Record slides: the mix with the screen as slides
   marks.txt                          only if you made marks
   session.json                       technical details: sources, gaps, restarts
 ```
@@ -136,6 +141,22 @@ mark; the minus button removes one.
 After Stop, marks become chapters (plus a first chapter "Start" at 0:00) in the mix and in the track files.
 Chapters were checked in QuickTime Player, Preview and VLC (IINA and iPhone apps were not checked). The same
 marks are written to `marks.txt` as `HH:MM:SS  comment` lines.
+
+### Slides
+
+Turn on **Record slides** under the sources before you press Record (it cannot be changed while recording). While
+recording, Dabber takes a screenshot of the display with the mouse pointer every 2 seconds. A screenshot is kept only
+when the screen has changed; a blinking text cursor or the menu bar clock does not count. The pointer itself is not
+in the picture.
+
+After Stop, Dabber makes `<name>.mp4` next to the mix: the same sound, HEVC video, 1920 pixels wide at most, the same
+chapters. Each kept screenshot is shown until the next one; the video is black until the first one. The screenshots
+are deleted after the video is made. If the video could not be made, the menu says "Slides video failed: …", the
+audio files are complete as usual, and the screenshots stay in the `frames` folder of the recording (HEIC files named
+by nanoseconds since the start).
+
+Everything on that display goes into the video: notifications, chats, passwords shown on screen. Turn Record slides
+off for recordings where this matters.
 
 ### Recording names
 
@@ -197,6 +218,9 @@ Your recordings in the output folder are not touched.
 
 - **The Mac audio track is silent.** Check System Settings > Privacy & Security > Screen & System Audio Recording and
   allow Dabber there. Without this permission Dabber cannot capture the Mac audio.
+- **Warning "Screen: no permission".** Record slides is on, but Dabber may not take screenshots. Open System Settings
+  > Privacy & Security > Screen & System Audio Recording, allow Dabber in the upper list (not "System Audio Recording
+  Only"), then quit and start Dabber again. The sound is recorded either way.
 - **Warning "… not connected — recording …" or "…: no signal for 10 s".** The first means an enabled microphone
   was absent when you started and another one is being recorded. The second means a microphone has been silent for
   10 seconds while the Mac was playing sound: check that the right microphone is enabled, not muted, and that Dabber
