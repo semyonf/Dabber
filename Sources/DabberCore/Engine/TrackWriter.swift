@@ -5,9 +5,21 @@ import Foundation
 import Synchronization
 
 public final class LevelMeter: Sendable {
-    private let bits = Atomic<UInt32>(Float(-160).bitPattern)
+    static let staleNanos: UInt64 = 1_000_000_000
 
-    public var decibels: Double { Double(Float(bitPattern: bits.load(ordering: .relaxed))) }
+    private let bits = Atomic<UInt32>(Float(-160).bitPattern)
+    private let updated = Atomic<UInt64>(0)
+    private let clock: @Sendable () -> UInt64
+
+    init(clock: @escaping @Sendable () -> UInt64 = HostClock.nowNanos) {
+        self.clock = clock
+    }
+
+    public var decibels: Double {
+        let now = clock(), last = updated.load(ordering: .relaxed)
+        guard now < last || now - last < Self.staleNanos else { return -160 }
+        return Double(Float(bitPattern: bits.load(ordering: .relaxed)))
+    }
 
     func update(_ samples: UnsafePointer<Float>, count: Int) {
         guard count > 0 else { return }
@@ -15,6 +27,7 @@ public final class LevelMeter: Sendable {
         for i in 0..<count { sum += samples[i] * samples[i] }
         let rms = (sum / Float(count)).squareRoot()
         bits.store((rms > 0 ? 20 * log10(rms) : -160).bitPattern, ordering: .relaxed)
+        updated.store(clock(), ordering: .relaxed)
     }
 }
 

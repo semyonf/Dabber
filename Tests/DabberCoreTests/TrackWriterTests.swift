@@ -134,3 +134,15 @@ func nonFiniteSamplesBecomeSilenceInsteadOfClicks(rate: Double, sourceChannels: 
     #expect(finite)
     #expect(peak <= 0.35)
 }
+
+@Test func levelMeterFallsSilentWhenBuffersStopComing() {
+    let now = Atomic<UInt64>(10_000_000_000)
+    let meter = LevelMeter { now.load(ordering: .relaxed) }
+    let loud = [Float](repeating: 0.5, count: 480)
+    loud.withUnsafeBufferPointer { meter.update($0.baseAddress!, count: $0.count) }
+    #expect(abs(meter.decibels - 20 * log10(0.5)) < 0.01)
+    now.store(10_500_000_000, ordering: .relaxed)
+    #expect(meter.decibels > -7)
+    now.store(11_200_000_000, ordering: .relaxed)
+    #expect(meter.decibels == -160)
+}
