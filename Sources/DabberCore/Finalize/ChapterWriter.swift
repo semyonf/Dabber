@@ -32,10 +32,7 @@ public enum ChapterWriter {
         let text = try chapterLane(chapters, end: end, writer: writer, linkedFrom: [audio])
         guard writer.startWriting() else { throw ChapterError.write(name, "\(writer.error.map { "\($0)" } ?? "start")") }
         writer.startSession(atSourceTime: .zero)
-        guard try WriterFeed([source.lane(audio)] + (text.map { [$0] } ?? [])).run() else {
-            writer.cancelWriting()
-            throw ChapterError.write(name, "timed out")
-        }
+        try WriterFeed([source.lane(audio)] + (text.map { [$0] } ?? [])).run(writer)
         writer.endSession(atSourceTime: end)
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }

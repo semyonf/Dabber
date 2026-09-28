@@ -1,5 +1,9 @@
 import AVFoundation
 
+struct FeedTimedOut: Error, CustomStringConvertible {
+    var description: String { "timed out" }
+}
+
 final class WriterFeed: @unchecked Sendable {
     typealias Lane = (input: AVAssetWriterInput, next: () throws -> CMSampleBuffer?)
 
@@ -12,14 +16,16 @@ final class WriterFeed: @unchecked Sendable {
         self.lanes = lanes
     }
 
-    func run(timeout: TimeInterval = 600) throws -> Bool {
+    func run(_ writer: AVAssetWriter, timeout: TimeInterval = 600) throws {
         for i in lanes.indices {
             group.enter()
             lanes[i].input.requestMediaDataWhenReady(on: DispatchQueue(label: "dabber.feed.\(i)")) { self.feed(i) }
         }
-        guard group.wait(timeout: .now() + timeout) == .success else { return false }
-        if let failure = lock.withLock({ failure }) { throw failure }
-        return true
+        let done = group.wait(timeout: .now() + timeout) == .success
+        if let error = lock.withLock({ failure }) ?? (done ? nil : FeedTimedOut()) {
+            writer.cancelWriting()
+            throw error
+        }
     }
 
     private func feed(_ i: Int) {

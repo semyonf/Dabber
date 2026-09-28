@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 import AudioToolbox
 import Foundation
 import Testing
@@ -490,5 +491,93 @@ extension FinalizerTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: out.path) == [name])
         #expect(FileManager.default.fileExists(atPath: out.appendingPathComponent(name).appendingPathComponent(name + ".m4a").path))
         #expect(try FileManager.default.contentsOfDirectory(atPath: work.path).isEmpty)
+    }
+}
+
+extension FinalizerTests {
+    private func slide(_ dir: URL, atSeconds s: Double, _ image: CGImage) throws -> Slide {
+        let url = dir.appendingPathComponent("\(s).heic")
+        try Frames.heic(image).write(to: url)
+        return Slide(offsetNanos: UInt64(s * 1e9), url: url)
+    }
+
+    private func videoTimes(_ url: URL) throws -> [Double] {
+        let movie = AVMovie(url: url)
+        let reader = try AVAssetReader(asset: movie)
+        let output = AVAssetReaderTrackOutput(track: movie.tracks.first { $0.mediaType == .video }!, outputSettings: nil)
+        reader.add(output)
+        #expect(reader.startReading())
+        var times: [Double] = []
+        while let buffer = output.copyNextSampleBuffer() {
+            if buffer.numSamples > 0 { times.append((buffer.presentationTimeStamp.seconds * 1000).rounded() / 1000) }
+        }
+        return times
+    }
+
+    @Test func slideTimesStartBlackDropLateFramesAndKeepTheLaterOfTwins() {
+        let a = URL(fileURLWithPath: "/a"), b = URL(fileURLWithPath: "/b"), c = URL(fileURLWithPath: "/c")
+        let times = SlideshowWriter.times(
+            [Slide(offsetNanos: 2_000, url: b), Slide(offsetNanos: 1_000, url: a), Slide(offsetNanos: 2_000, url: c), Slide(offsetNanos: 9_000, url: a)],
+            endNanos: 5_000)
+        #expect(times.map(\.atNanos) == [0, 1_000, 2_000])
+        #expect(times.map(\.slide?.url) == [nil, a, c])
+        #expect(SlideshowWriter.times([Slide(offsetNanos: 0, url: a)], endNanos: 5_000).map(\.atNanos) == [0])
+        #expect(SlideshowWriter.times([], endNanos: 5_000).isEmpty)
+    }
+
+    @Test func slideshowIsHEVCWithTheSameAudioChaptersAndTitle() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sl-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let audio = dir.appendingPathComponent("mix.m4a")
+        let writer = try AACWriter(url: audio, channels: 2)
+        try writer.write(sine(frames: 144_000, channels: 2))
+        try writer.closeAndVerify()
+        let slides = [
+            try slide(dir, atSeconds: 1, screen(rects: [CGRect(x: 100, y: 100, width: 300, height: 200)])),
+            try slide(dir, atSeconds: 2, screen(width: 1440, height: 900, gray: 0)),
+        ]
+        let out = dir.appendingPathComponent("mix.mp4")
+        try SlideshowWriter.write(
+            audio: audio, slides: slides, chapters: [Chapter(startMillis: 0, title: "Start"), Chapter(startMillis: 1_500, title: "про деньги")],
+            title: "Созвон", to: out)
+        #expect(try videoTimes(out) == [0, 1, 2])
+        let asset = AVURLAsset(url: out)
+        let track = try await asset.loadTracks(withMediaType: .video).first!
+        let format = try await track.load(.formatDescriptions).first!
+        #expect(format.mediaSubType == .hevc)
+        #expect(format.dimensions.width == 1920 && format.dimensions.height == 1080)
+        let range = try await track.load(.timeRange)
+        #expect(abs(range.end.seconds - 3) < 0.01)
+        #expect(try audioBytes(out) == audioBytes(audio))
+        #expect(try await chapterList(out) == ["0.000 Start", "1.500 про деньги"])
+        #expect(try await titleTag(out) == "Созвон")
+        let bytes = try Data(contentsOf: out)
+        #expect(bytes.range(of: Data("hvc1".utf8)) != nil)
+        #expect(bytes.range(of: Data("hev1".utf8)) == nil)
+    }
+
+    @Test func slideshowWithoutUsableFramesFails() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sl-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let audio = dir.appendingPathComponent("mix.m4a")
+        let writer = try AACWriter(url: audio, channels: 2)
+        try writer.write(sine(frames: 48_000, channels: 2))
+        try writer.closeAndVerify()
+        let late = try slide(dir, atSeconds: 5, screen())
+        #expect(throws: SlideshowError.self) {
+            try SlideshowWriter.write(audio: audio, slides: [late], chapters: [], title: nil, to: dir.appendingPathComponent("mix.mp4"))
+        }
+        let missing = Slide(offsetNanos: 0, url: dir.appendingPathComponent("gone.heic"))
+        #expect(throws: FrameError.self) {
+            try SlideshowWriter.write(audio: audio, slides: [missing], chapters: [], title: nil, to: dir.appendingPathComponent("mix.mp4"))
+        }
+        let good = try slide(dir, atSeconds: 0, screen())
+        let broken = dir.appendingPathComponent("broken.heic")
+        try Data([1, 2, 3]).write(to: broken)
+        let out = dir.appendingPathComponent("mix.mp4")
+        #expect(throws: FrameError.self) {
+            try SlideshowWriter.write(audio: audio, slides: [good, Slide(offsetNanos: 500_000_000, url: broken)], chapters: [], title: nil, to: out)
+        }
+        #expect(!FileManager.default.fileExists(atPath: out.path))
     }
 }

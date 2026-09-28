@@ -38,19 +38,25 @@ public enum Frames {
     }
 
     public static func draw(_ image: CGImage?, width: Int, height: Int) throws -> CGImage {
-        guard let ctx = CGContext(
-            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
-        else { throw FrameError.draw }
-        ctx.setFillColor(CGColor(gray: 0, alpha: 1))
-        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        if let image {
-            ctx.interpolationQuality = .high
-            ctx.draw(image, in: fit(image, width: width, height: height))
-        }
+        guard let ctx = context(nil, width: width, height: height, bytesPerRow: 0) else { throw FrameError.draw }
+        render(image, in: ctx, width: width, height: height)
         guard let out = ctx.makeImage() else { throw FrameError.draw }
         return out
+    }
+
+    static func context(_ data: UnsafeMutableRawPointer?, width: Int, height: Int, bytesPerRow: Int) -> CGContext? {
+        CGContext(
+            data: data, width: width, height: height, bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+    }
+
+    static func render(_ image: CGImage?, in ctx: CGContext, width: Int, height: Int) {
+        ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        guard let image else { return }
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: fit(image, width: width, height: height))
     }
 
     static func fit(_ image: CGImage, width: Int, height: Int) -> CGRect {
