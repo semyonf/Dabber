@@ -240,6 +240,9 @@ Your recordings in the output folder are not touched.
 - **Dabber asks for permissions again after an update.** The app was signed with a different certificate, usually
   because "Dabber Dev" was deleted and created again. Allow the permissions once more; they then stay for future
   builds with this certificate.
+- **Warning "Could not read: …".** A piece of a track was damaged, usually by a power loss or a crash. Dabber
+  finished the recording without that piece (silence in its place) and left the damaged `.caf` file in the recording
+  folder.
 - **"Finalizing…" takes a long time.** After Stop Dabber encodes every track and the mix. This takes longer for long
   recordings and more sources, and longer again if the output folder is on another disk. Let it finish; if you quit,
   Dabber waits for it. If Dabber was closed unexpectedly, unfinished recordings are finished at the next launch.
