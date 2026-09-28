@@ -12,6 +12,8 @@ private final class FakeGrabber: ScreenGrabber, @unchecked Sendable {
     let permitted: Bool
     private let lock = NSLock()
     private var queue: [Result<ScreenGrab, GrabFailed>]
+    private var grabs = 0
+    var grabCount: Int { lock.withLock { grabs } }
 
     init(permitted: Bool = true, _ queue: [Result<ScreenGrab, GrabFailed>]) {
         self.permitted = permitted
@@ -21,7 +23,10 @@ private final class FakeGrabber: ScreenGrabber, @unchecked Sendable {
     func allowed() -> Bool { permitted }
 
     func grab() async throws -> ScreenGrab {
-        let next = lock.withLock { queue.count > 1 ? queue.removeFirst() : queue.first }
+        let next = lock.withLock {
+            grabs += 1
+            return queue.count > 1 ? queue.removeFirst() : queue.first
+        }
         guard let next else { throw GrabFailed() }
         return try next.get()
     }
@@ -33,6 +38,18 @@ private final class Store: @unchecked Sendable {
     var count: Int { lock.withLock { items.count } }
     var times: [UInt64] { lock.withLock { items.map(\.0) } }
     func add(_ at: UInt64, _ data: Data) -> Bool { lock.withLock { items.append((at, data)) }; return true }
+}
+
+private final class FailOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failed = false
+    func check() throws {
+        let first = lock.withLock { () -> Bool in
+            defer { failed = true }
+            return !failed
+        }
+        if first { throw GrabFailed() }
+    }
 }
 
 private func ticking() -> @Sendable () -> UInt64 {
@@ -82,6 +99,22 @@ private func ticking() -> @Sendable () -> UInt64 {
     slides.start { store.add($0, $1) }
     #expect(waitUntil { store.count == 2 })
     slides.stop()
+    Thread.sleep(forTimeInterval: 0.02)
+    let grabs = grabber.grabCount
     Thread.sleep(forTimeInterval: 0.05)
+    #expect(grabber.grabCount == grabs)
     #expect(store.count == 2)
+    #expect(slides.status == nil)
+}
+
+@Test func aFailedStoreIsRetriedWithTheSameScreen() {
+    let slides = SlideRecorder(grabber: FakeGrabber([.success(ScreenGrab(image: screen(), display: 1))]), interval: .milliseconds(5))
+    let store = Store()
+    let once = FailOnce()
+    slides.start { at, data in
+        try once.check()
+        return store.add(at, data)
+    }
+    #expect(waitUntil { store.count == 1 })
+    slides.stop()
 }

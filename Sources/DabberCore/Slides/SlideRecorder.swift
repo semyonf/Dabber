@@ -41,6 +41,10 @@ public final class SlideRecorder: @unchecked Sendable {
         self.clock = clock
     }
 
+    deinit {
+        task?.cancel()
+    }
+
     public var status: ScreenStatus? { lock.withLock { current } }
 
     public func start(store: @escaping @Sendable (UInt64, Data) throws -> Bool) {
@@ -49,14 +53,18 @@ public final class SlideRecorder: @unchecked Sendable {
         set(.on)
         let (grabber, interval, clock) = (self.grabber, self.interval, self.clock)
         let task = Task.detached { [weak self] in
-            let sampler = FrameSampler()
+            var sampler = FrameSampler()
             while !Task.isCancelled {
                 let at = clock()
                 do {
                     let grab = try await grabber.grab()
-                    if let data = try sampler.offer(grab.image, display: grab.display) { _ = try store(at, data) }
+                    guard !Task.isCancelled else { break }
+                    if let data = try sampler.offer(grab.image, display: grab.display) {
+                        _ = try store(at, data)
+                    }
                     self?.set(.on)
                 } catch {
+                    sampler = FrameSampler()
                     self?.set(.failed("\(error)"))
                 }
                 try? await Task.sleep(for: interval)
@@ -74,6 +82,6 @@ public final class SlideRecorder: @unchecked Sendable {
     }
 
     private func set(_ status: ScreenStatus) {
-        lock.withLock { current = status }
+        lock.withLock { if !Task.isCancelled { current = status } }
     }
 }
