@@ -1,0 +1,87 @@
+import CoreGraphics
+import Foundation
+import Synchronization
+import Testing
+@testable import DabberCore
+
+private struct GrabFailed: Error, CustomStringConvertible {
+    var description: String { "grab failed" }
+}
+
+private final class FakeGrabber: ScreenGrabber, @unchecked Sendable {
+    let permitted: Bool
+    private let lock = NSLock()
+    private var queue: [Result<ScreenGrab, GrabFailed>]
+
+    init(permitted: Bool = true, _ queue: [Result<ScreenGrab, GrabFailed>]) {
+        self.permitted = permitted
+        self.queue = queue
+    }
+
+    func allowed() -> Bool { permitted }
+
+    func grab() async throws -> ScreenGrab {
+        let next = lock.withLock { queue.count > 1 ? queue.removeFirst() : queue.first }
+        guard let next else { throw GrabFailed() }
+        return try next.get()
+    }
+}
+
+private final class Store: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [(UInt64, Data)] = []
+    var count: Int { lock.withLock { items.count } }
+    var times: [UInt64] { lock.withLock { items.map(\.0) } }
+    func add(_ at: UInt64, _ data: Data) -> Bool { lock.withLock { items.append((at, data)) }; return true }
+}
+
+private func ticking() -> @Sendable () -> UInt64 {
+    let n = Atomic<UInt64>(0)
+    return { n.add(1, ordering: .relaxed).newValue }
+}
+
+@Test func slidesStoreOnlyChangedScreens() {
+    let white = ScreenGrab(image: screen(), display: 1)
+    let black = ScreenGrab(image: screen(gray: 0), display: 1)
+    let grabber = FakeGrabber([.success(white), .success(white), .success(black), .success(black)])
+    let slides = SlideRecorder(grabber: grabber, interval: .milliseconds(5), clock: ticking())
+    let store = Store()
+    slides.start { store.add($0, $1) }
+    #expect(waitUntil { store.count == 2 })
+    #expect(slides.status == .on)
+    Thread.sleep(forTimeInterval: 0.1)
+    slides.stop()
+    #expect(store.count == 2)
+    #expect(store.times == [1, 3])
+    #expect(slides.status == nil)
+}
+
+@Test func slidesWithoutPermissionSayWhyAndDoNothing() {
+    let slides = SlideRecorder(grabber: FakeGrabber(permitted: false, [.success(ScreenGrab(image: screen(), display: 1))]), interval: .milliseconds(5))
+    let store = Store()
+    slides.start { store.add($0, $1) }
+    #expect(slides.status == .noPermission)
+    Thread.sleep(forTimeInterval: 0.05)
+    #expect(store.count == 0)
+}
+
+@Test func aFailedGrabIsReportedAndTheNextSuccessClearsIt() {
+    let grabber = FakeGrabber([.failure(GrabFailed()), .failure(GrabFailed()), .success(ScreenGrab(image: screen(), display: 1))])
+    let slides = SlideRecorder(grabber: grabber, interval: .milliseconds(20))
+    let store = Store()
+    slides.start { store.add($0, $1) }
+    #expect(waitUntil { slides.status == .failed("grab failed") })
+    #expect(waitUntil { store.count == 1 && slides.status == .on })
+    slides.stop()
+}
+
+@Test func stoppedSlidesStopGrabbing() {
+    let grabber = FakeGrabber([.success(ScreenGrab(image: screen(), display: 1)), .success(ScreenGrab(image: screen(), display: 2))])
+    let slides = SlideRecorder(grabber: grabber, interval: .milliseconds(5))
+    let store = Store()
+    slides.start { store.add($0, $1) }
+    #expect(waitUntil { store.count == 2 })
+    slides.stop()
+    Thread.sleep(forTimeInterval: 0.05)
+    #expect(store.count == 2)
+}
