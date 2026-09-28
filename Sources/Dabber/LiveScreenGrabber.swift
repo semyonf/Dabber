@@ -1,4 +1,4 @@
-import AppKit
+import CoreGraphics
 import DabberCore
 import ScreenCaptureKit
 
@@ -12,7 +12,7 @@ struct LiveScreenGrabber: ScreenGrabber {
     func allowed() -> Bool { CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() }
 
     func grab() async throws -> ScreenGrab {
-        let id = await MainActor.run { Self.displayUnderCursor() }
+        let id = Self.displayUnderCursor()
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID == id }) ?? content.displays.first else {
             throw GrabError.noDisplay
@@ -28,9 +28,10 @@ struct LiveScreenGrabber: ScreenGrabber {
         return ScreenGrab(image: image, display: display.displayID)
     }
 
-    @MainActor private static func displayUnderCursor() -> CGDirectDisplayID? {
-        let point = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) } ?? NSScreen.main
-        return screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+    private static func displayUnderCursor() -> CGDirectDisplayID? {
+        guard let point = CGEvent(source: nil)?.location else { return nil }
+        var id = CGDirectDisplayID(0)
+        var count: UInt32 = 0
+        return CGGetDisplaysWithPoint(point, 1, &id, &count) == .success && count > 0 ? id : nil
     }
 }
