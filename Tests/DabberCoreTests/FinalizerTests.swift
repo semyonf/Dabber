@@ -95,6 +95,20 @@ extension FinalizerTests {
         #expect(FileManager.default.fileExists(atPath: done.appendingPathComponent("stray.caf").path))
     }
 
+    @Test func recoveryReportsWhatItCouldNotRead() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rec-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let pending = root.appendingPathComponent("pending")
+        try FileManager.default.moveItem(at: try makeSession(), to: pending)
+        try Data(repeating: 1, count: 100).write(to: pending.appendingPathComponent("mic - A.seg001.caf"))
+        var reports: [(String, [String]?)] = []
+        let done = Finalizer.recoverAll(dirs: [pending], onReport: { dir, report in reports.append((dir.lastPathComponent, report.unreadable)) })
+        let name = SessionNaming.sessionName(startedAt, title: "")
+        #expect(done.map(\.lastPathComponent) == [name])
+        #expect(reports.map(\.0) == [name])
+        #expect(reports.map(\.1) == [["mic - A.seg001.caf"]])
+    }
+
     @Test func missingSegmentFileIsSkippedNotFatal() throws {
         let dir = try makeSession()
         try FileManager.default.removeItem(at: dir.appendingPathComponent("mic - A.seg001.caf"))

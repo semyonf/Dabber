@@ -352,6 +352,18 @@ private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], fi
     #expect(m.warning == nil)
 }
 
+@MainActor @Test func recoveredSessionProblemsAreWarningsUntilSeen() {
+    let m = model(FakeEngine())
+    m.recovered(
+        URL(fileURLWithPath: "/tmp/rec/2026-09-23 10-00"),
+        FinalizeReport(totalFrames: 1, gaps: [], driftMillis: [:], resampled: [], slidesError: "no frames", unreadable: ["a.caf"]))
+    #expect(m.warning == "2026-09-23 10-00: Slides video failed: no frames; 2026-09-23 10-00: Could not read: a.caf")
+    m.menuClosed()
+    #expect(m.warning == nil)
+    m.recovered(URL(fileURLWithPath: "/tmp/rec/x"), FinalizeReport(totalFrames: 1, gaps: [], driftMillis: [:], resampled: []))
+    #expect(m.warning == nil)
+}
+
 @MainActor @Test func lowDiskWarningIsShown() async {
     let e = FakeEngine()
     let m = model(e, enabled: ["computer", "ap"])

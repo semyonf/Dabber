@@ -170,11 +170,16 @@ public enum Finalizer {
     }
 
     @discardableResult
-    public static func recoverAll(dirs: [URL], onError: (URL, Error) -> Void = { _, _ in }) -> [URL] {
+    public static func recoverAll(
+        dirs: [URL], onError: (URL, Error) -> Void = { _, _ in }, onReport: (URL, FinalizeReport) -> Void = { _, _ in }
+    ) -> [URL] {
         var done: [URL] = []
         for dir in dirs where needsRecovery(dir) {
             do {
-                done.append(try finish(dir))
+                let report = try run(dir)
+                let named = try rename(dir)
+                onReport(named, report)
+                done.append(named)
             } catch {
                 onError(dir, error)
             }

@@ -274,6 +274,16 @@ public final class RecorderModel {
         tick()
     }
 
+    public func recovered(_ dir: URL, _ report: FinalizeReport) {
+        notices += Self.problems(report).map { "\(dir.lastPathComponent): \($0)" }
+        tick()
+    }
+
+    nonisolated static func problems(_ report: FinalizeReport) -> [String] {
+        (report.slidesError.map { ["Slides video failed: \($0)"] } ?? [])
+            + (report.unreadable.map { ["Could not read: \($0.joined(separator: ", "))"] } ?? [])
+    }
+
     public func recoveryFailed(_ dir: URL, _ error: any Error) {
         notices.append("Could not finish \(dir.lastPathComponent): \(error)")
         tick()
@@ -379,8 +389,7 @@ public final class RecorderModel {
                 errorText = "finalize failed: \(error)"
             }
             if let done = lastSessionDir, let report = (try? SessionManifest.load(from: done))?.finalize {
-                if let why = report.slidesError { notices.append("Slides video failed: \(why)") }
-                if let files = report.unreadable { notices.append("Could not read: \(files.joined(separator: ", "))") }
+                notices += Self.problems(report)
             }
             finalizing = false
             finalizeTask = nil

@@ -56,9 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let pending = Finalizer.sessionFolders(root: work)
         Task.detached {
-            let failure = Delivery.recover(pending, work: work, output: output) { dir, error in
-                Task { @MainActor in Self.model.recoveryFailed(dir, error) }
-            }
+            let failure = Delivery.recover(
+                pending, work: work, output: output,
+                onError: { dir, error in Task { @MainActor in Self.model.recoveryFailed(dir, error) } },
+                onReport: { dir, report in Task { @MainActor in Self.model.recovered(dir, report) } })
             await MainActor.run { Self.model.deliveryDone(failure: failure) }
         }
         Task { @MainActor in

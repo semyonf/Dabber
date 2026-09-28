@@ -62,10 +62,11 @@ public enum Delivery {
     }
 
     public static func recover(
-        _ dirs: [URL], work: URL, output: URL, mover: Mover = .live, onError: (URL, any Error) -> Void = { _, _ in }
+        _ dirs: [URL], work: URL, output: URL, mover: Mover = .live,
+        onError: (URL, any Error) -> Void = { _, _ in }, onReport: (URL, FinalizeReport) -> Void = { _, _ in }
     ) -> String? {
         lock.withLock {
-            Finalizer.recoverAll(dirs: dirs, onError: onError)
+            Finalizer.recoverAll(dirs: dirs, onError: onError, onReport: onReport)
             return deliverPending(from: work, to: output, mover: mover)
         }
     }
