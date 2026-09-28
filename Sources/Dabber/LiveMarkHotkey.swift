@@ -59,7 +59,7 @@ final class LiveMarkHotkey: MarkHotkey, @unchecked Sendable {
         }
         let time = Double(event.timestamp) / 1e9
         guard let fired = lock.withLock({ detector.handle(key, at: time) ? fire : nil }) else { return }
-        NSSound(named: "Tink")?.play()
+        NSSound(named: "Morse")?.play()
         fired()
     }
 }
