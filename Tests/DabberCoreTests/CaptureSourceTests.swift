@@ -102,6 +102,21 @@ private func makeSource(_ probe: Probe) throws -> FakeDeviceSource {
     source.stop()
 }
 
+@Test func aStartErrorOnWakeIsRetried() throws {
+    let probe = Probe()
+    let source = try makeSource(probe)
+    source.retryDelay = 0.2
+    try source.start()
+    source.pause()
+    #expect(!probe.running)
+    source.streamlessOpens.store(1, ordering: .relaxed)
+    source.resume()
+    #expect(waitUntil { source.status == .running })
+    #expect(probe.starts == 2)
+    #expect(source.restarts.map(\.reason) == ["wake", "wake"])
+    source.stop()
+}
+
 @Test func deviceThatAppearsBeforeItsInputStreamIsRetried() throws {
     let probe = Probe()
     let source = try makeSource(probe)

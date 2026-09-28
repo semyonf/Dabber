@@ -147,14 +147,8 @@ public class CaptureSource: @unchecked Sendable {
             paused = false
             guard wanted, stopIO == nil else { return }
             guard deviceIsPresent() else { return setStatus(.waitingForDevice) }
-            restartEvents.append(RestartEvent(atNanos: HostClock.nowNanos(), reason: "wake"))
-            do {
-                try startLocked(reason: "restart: wake")
-            } catch SourceError.deviceMissing {
-                setStatus(.waitingForDevice)
-            } catch {
-                setStatus(.failed("\(error)"))
-            }
+            attempts = 0
+            restartLocked(reason: "wake")
         }
     }
 
