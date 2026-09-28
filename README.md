@@ -218,7 +218,7 @@ Your recordings in the output folder are not touched.
 
 - **The Mac audio track is silent.** Check System Settings > Privacy & Security > Screen & System Audio Recording and
   allow Dabber there. Without this permission Dabber cannot capture the Mac audio.
-- **Warning "Screen: no permission".** Record slides is on, but Dabber may not take screenshots. Open System Settings
+- **Warning "Screen: no permission".** Record slides is on, but Dabber is not allowed to take screenshots. Open System Settings
   > Privacy & Security > Screen & System Audio Recording, allow Dabber in the upper list (not "System Audio Recording
   Only"), then quit and start Dabber again. The sound is recorded either way.
 - **Warning "… not connected — recording …" or "…: no signal for 10 s".** The first means an enabled microphone

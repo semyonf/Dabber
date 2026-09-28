@@ -25,7 +25,7 @@ and builds a video where the mix audio plays and each changed screen stays until
 
 ### Capture
 
-- Runs only when **Record slides** was on at Record. Starts with the recording, stops with it. A timer fires every 2 s and captures the display that contains the
+- Runs only when **Record slides** was on at Record. Starts with the recording, stops with it. Each capture takes the display that contains the
   mouse cursor at that moment.
 - The frame is scaled to at most 1920 wide (even dimensions). Then it is compared with the last stored frame on a
   small grayscale thumbnail; if the difference is below a small threshold, the frame is dropped. The threshold
@@ -33,7 +33,7 @@ and builds a video where the mix audio plays and each changed screen stays until
   to another monitor) always counts as a change.
 - A changed frame is written at once as HEIC into `frames/` in the session folder, named by elapsed nanoseconds.
   Its time and file name are added to `session.json` at once, like marks, so crash recovery also builds the video.
-- A capture that takes longer than 2 s does not queue up: the next tick is skipped while one is still running.
+- The loop waits 2 s after each capture (so the period is 2 s plus the capture time) and captures never queue up.
 - There is no separate status line: the checked **Record slides** toggle says it is on. Problems go into the
   existing warning line (the menu bar icon shows the warning): "Screen: no permission (Privacy & Security > Screen &
   System Audio Recording)" or "Screen: <error>". Capture problems never stop or affect the audio recording.
@@ -48,7 +48,8 @@ and builds a video where the mix audio plays and each changed screen stays until
 - Frame size: the first frame's size. Frames of another size (another monitor) are scaled to fit with black bars.
 - Chapters and the title tag: the same as the mix `.m4a` (reuse `ChapterWriter`).
 - After a successful build `frames/` is deleted. If the build fails, the `.m4a` files are still delivered, `frames/`
-  is kept, and the error is written to `session.json` and shown in the menu.
+  is kept, and the error is written to `session.json` and shown in the menu. For a session finished by crash
+  recovery at launch the error is only in `session.json`.
   Because `frames/` can then reach the output folder, the copy check for another disk compares files in subfolders
   too.
 
