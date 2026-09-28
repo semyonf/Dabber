@@ -535,4 +535,5 @@ git commit -m "docs: mark hotkey in the README"
 - [ ] `scripts/install-app.sh`, start Dabber, press Record. Allow Input Monitoring when asked (System Settings > Privacy & Security > Input Monitoring), then quit and start Dabber again and press Record.
 - [ ] The menu shows "Double-tap right ⌥ to mark" under Mark. Double-tap the right Option key in another app: a Tink sound, a new mark in the menu.
 - [ ] Type text with Option+letters and hold the right Option: no marks. Double-tap the left Option: no mark.
+- [ ] Two taps of the right Option about 1 s apart: no mark (checks that event timestamps are nanoseconds).
 - [ ] After Stop, double taps do nothing.

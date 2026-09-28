@@ -45,6 +45,7 @@ Dabber is built from source on your Mac. There is no prebuilt download.
 | --- | --- | --- |
 | Microphone | First recording (or virtual mic use) with a microphone | To record your microphones |
 | System Audio Recording | First recording (or virtual mic use) with Mac audio | To record sound played by other apps |
+| Input Monitoring | First recording | To notice a double tap of the right Option key (the Mark hotkey). Dabber only listens and only while recording. If you decline, use the Mark button |
 | Screen Recording | First recording with Record slides on | To take the screenshots for the slides video |
 | Calendars (full access) | First recording | To read the title of the current event and name the recording after it. Dabber only reads events. If you decline, recordings are named by date and time |
 
@@ -137,6 +138,12 @@ enabled microphones are connected and others are not, it records the connected o
 While recording, press **Mark**. A comment field appears; type a short note and press Return, or leave it empty.
 Marks without a comment are called "Mark 1", "Mark 2" and so on. The list under the button shows the time of each
 mark; the minus button removes one.
+
+**Hotkey:** double-tap the right Option key (⌥⌥) to make a mark without opening the menu. A short sound confirms
+it; type the comment later in the menu if you want one. It works only while recording, and only a quick double tap
+of the right Option key alone counts (Option with a letter never makes a mark). It needs the Input Monitoring
+permission; without it the menu says "Allow Input Monitoring for the ⌥⌥ hotkey" (System Settings > Privacy &
+Security > Input Monitoring, then quit and start Dabber again).
 
 After Stop, marks become chapters (plus a first chapter "Start" at 0:00) in the mix and in the track files.
 Chapters were checked in QuickTime Player, Preview and VLC (IINA and iPhone apps were not checked). The same
