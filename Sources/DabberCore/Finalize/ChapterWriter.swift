@@ -19,47 +19,20 @@ public enum ChapterWriter {
     public static func write(_ chapters: [Chapter], title: String? = nil, into url: URL) throws {
         let name = url.lastPathComponent
         let frames = try AVAudioFile(forReading: url).length
-        let movie = AVMovie(url: url)
-        guard let track = movie.tracks.first(where: { $0.mediaType == .audio }) else { throw ChapterError.noAudio(name) }
-        let reader = try AVAssetReader(asset: movie)
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
-        reader.add(output)
-        guard reader.startReading(), let first = output.copyNextSampleBuffer(), let audioFormat = first.formatDescription else {
-            throw ChapterError.noAudio(name)
-        }
+        let source = try AudioPassthrough(url)
         let temp = try FileManager.default.url(
             for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: url, create: true)
         defer { try? FileManager.default.removeItem(at: temp) }
         let out = temp.appendingPathComponent(name)
         let writer = try AVAssetWriter(outputURL: out, fileType: .m4a)
-        if let title {
-            let item = AVMutableMetadataItem()
-            item.identifier = .commonIdentifierTitle
-            item.value = title as NSString
-            writer.metadata = [item]
-        }
-        let audio = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: audioFormat)
+        writer.metadata = titleMetadata(title)
+        let audio = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: source.format)
         writer.add(audio)
         let end = CMTime(value: frames, timescale: CMTimeScale(Timeline.rate))
-        var text: AVAssetWriterInput?
-        var samples: [CMSampleBuffer] = []
-        if !chapters.isEmpty {
-            let textFormat = try Self.textFormat()
-            let input = AVAssetWriterInput(mediaType: .text, outputSettings: nil, sourceFormatHint: textFormat)
-            input.marksOutputTrackAsEnabled = false
-            writer.add(input)
-            audio.addTrackAssociation(withTrackOf: input, type: AVAssetTrack.AssociationType.chapterList.rawValue)
-            samples = try chapters.indices.map { i in
-                let start = CMTime(value: CMTimeValue(chapters[i].startMillis), timescale: 1000)
-                let next = i + 1 < chapters.count ? CMTime(value: CMTimeValue(chapters[i + 1].startMillis), timescale: 1000) : end
-                return try Self.sample(chapters[i].title, start: start, duration: next - start, format: textFormat)
-            }
-            text = input
-        }
+        let text = try chapterLane(chapters, end: end, writer: writer, linkedFrom: [audio])
         guard writer.startWriting() else { throw ChapterError.write(name, "\(writer.error.map { "\($0)" } ?? "start")") }
         writer.startSession(atSourceTime: .zero)
-        let feed = Feed(audio: audio, text: text, output: output, first: first, samples: samples)
-        guard feed.run() else {
+        guard try WriterFeed([source.lane(audio)] + (text.map { [$0] } ?? [])).run() else {
             writer.cancelWriting()
             throw ChapterError.write(name, "timed out")
         }
@@ -67,8 +40,8 @@ public enum ChapterWriter {
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }
         done.wait()
-        guard writer.status == .completed, reader.status == .completed else {
-            throw ChapterError.write(name, "\(writer.error ?? reader.error.map { $0 as any Error } ?? ChapterError.noAudio(name))")
+        guard writer.status == .completed, source.reader.status == .completed else {
+            throw ChapterError.write(name, "\(writer.error ?? source.reader.error.map { $0 as any Error } ?? ChapterError.noAudio(name))")
         }
         let written = try AVAudioFile(forReading: out).length
         guard written == frames else {
@@ -77,52 +50,31 @@ public enum ChapterWriter {
         _ = try FileManager.default.replaceItemAt(url, withItemAt: out)
     }
 
-    private final class Feed: @unchecked Sendable {
-        let audio: AVAssetWriterInput
-        let text: AVAssetWriterInput?
-        let output: AVAssetReaderTrackOutput
-        var first: CMSampleBuffer?
-        var samples: [CMSampleBuffer]
-        let group = DispatchGroup()
+    static func titleMetadata(_ title: String?) -> [AVMetadataItem] {
+        guard let title else { return [] }
+        let item = AVMutableMetadataItem()
+        item.identifier = .commonIdentifierTitle
+        item.value = title as NSString
+        return [item]
+    }
 
-        init(audio: AVAssetWriterInput, text: AVAssetWriterInput?, output: AVAssetReaderTrackOutput,
-             first: CMSampleBuffer, samples: [CMSampleBuffer]) {
-            self.audio = audio
-            self.text = text
-            self.output = output
-            self.first = first
-            self.samples = samples
+    static func chapterLane(
+        _ chapters: [Chapter], end: CMTime, writer: AVAssetWriter, linkedFrom tracks: [AVAssetWriterInput]
+    ) throws -> WriterFeed.Lane? {
+        guard !chapters.isEmpty else { return nil }
+        let format = try textFormat()
+        let input = AVAssetWriterInput(mediaType: .text, outputSettings: nil, sourceFormatHint: format)
+        input.marksOutputTrackAsEnabled = false
+        writer.add(input)
+        for track in tracks {
+            track.addTrackAssociation(withTrackOf: input, type: AVAssetTrack.AssociationType.chapterList.rawValue)
         }
-
-        func run() -> Bool {
-            if let text {
-                group.enter()
-                text.requestMediaDataWhenReady(on: DispatchQueue(label: "dabber.chapters.text")) { self.feedText() }
-            }
-            group.enter()
-            audio.requestMediaDataWhenReady(on: DispatchQueue(label: "dabber.chapters.audio")) { self.feedAudio() }
-            return group.wait(timeout: .now() + 600) == .success
+        var samples = try chapters.indices.map { i in
+            let start = CMTime(value: CMTimeValue(chapters[i].startMillis), timescale: 1000)
+            let next = i + 1 < chapters.count ? CMTime(value: CMTimeValue(chapters[i + 1].startMillis), timescale: 1000) : end
+            return try sample(chapters[i].title, start: start, duration: next - start, format: format)
         }
-
-        private func feedText() {
-            guard let text else { return }
-            while text.isReadyForMoreMediaData {
-                guard !samples.isEmpty, text.append(samples.removeFirst()) else { return finish(text) }
-            }
-        }
-
-        private func feedAudio() {
-            while audio.isReadyForMoreMediaData {
-                let next = first ?? output.copyNextSampleBuffer()
-                first = nil
-                guard let next, audio.append(next) else { return finish(audio) }
-            }
-        }
-
-        private func finish(_ input: AVAssetWriterInput) {
-            input.markAsFinished()
-            group.leave()
-        }
+        return (input, { samples.isEmpty ? nil : samples.removeFirst() })
     }
 
     private static func sample(_ title: String, start: CMTime, duration: CMTime, format: CMFormatDescription) throws -> CMSampleBuffer {
