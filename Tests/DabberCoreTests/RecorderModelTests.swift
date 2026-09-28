@@ -791,3 +791,63 @@ private func slidesModel(
     m.menuClosed()
     #expect(m.warning == nil)
 }
+
+private final class FakeHotkey: MarkHotkey, @unchecked Sendable {
+    let allowed: Bool
+    var fire: (@Sendable () -> Void)?
+    var stops = 0
+    init(allowed: Bool = true) { self.allowed = allowed }
+    func start(_ fire: @escaping @Sendable () -> Void) -> Bool {
+        self.fire = fire
+        return allowed
+    }
+    func stop() {
+        stops += 1
+        fire = nil
+    }
+}
+
+@MainActor
+private func hotkeyModel(_ engine: FakeEngine, _ hotkey: FakeHotkey) -> RecorderModel {
+    let m = RecorderModel(
+        engine: engine, catalog: FakeCatalog(devices: [airpods]), enabledIDs: ["computer", "ap"], persist: { _ in },
+        finalize: { dir, _ in dir }, hotkey: hotkey)
+    m.refreshDevices()
+    return m
+}
+
+@MainActor @Test func hotkeyMarksOnlyWhileRecording() async {
+    let e = FakeEngine()
+    let hotkey = FakeHotkey()
+    let m = hotkeyModel(e, hotkey)
+    #expect(hotkey.fire == nil)
+    #expect(m.hotkeyHint == nil)
+    await m.startStop()
+    #expect(m.hotkeyHint == "Double-tap right ⌥ to mark")
+    hotkey.fire?()
+    for _ in 0..<20 where m.marks.isEmpty { await Task.yield() }
+    #expect(m.marks.count == 1)
+    await m.startStop()
+    #expect(hotkey.fire == nil)
+    #expect(hotkey.stops == 1)
+    #expect(m.hotkeyHint == nil)
+}
+
+@MainActor @Test func hotkeyWithoutPermissionSaysHowToAllowIt() async {
+    let m = hotkeyModel(FakeEngine(), FakeHotkey(allowed: false))
+    await m.startStop()
+    #expect(m.hotkeyHint == "Allow Input Monitoring for the ⌥⌥ hotkey")
+    #expect(m.warning == nil)
+}
+
+@MainActor @Test func hotkeyStopsWhenTheSessionStopsItself() async {
+    let e = FakeEngine()
+    let hotkey = FakeHotkey()
+    let m = hotkeyModel(e, hotkey)
+    await m.startStop()
+    e.phase = .idle
+    m.tick()
+    m.tick()
+    #expect(hotkey.stops == 1)
+    #expect(hotkey.fire == nil)
+}

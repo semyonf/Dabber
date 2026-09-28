@@ -19,6 +19,11 @@ extension SessionRecorder: RecordingEngine {
     }
 }
 
+public protocol MarkHotkey: Sendable {
+    func start(_ fire: @escaping @Sendable () -> Void) -> Bool
+    func stop()
+}
+
 public protocol DeviceCatalog: Sendable {
     func inputs() throws -> [InputDevice]
     func defaultInputUID() -> String?
@@ -70,6 +75,7 @@ public final class RecorderModel {
     public private(set) var title = ""
     public private(set) var outputFolder: URL
     public private(set) var slidesOn: Bool
+    public private(set) var hotkeyAllowed: Bool?
 
     private let engine: any RecordingEngine
     private let catalog: any DeviceCatalog
@@ -81,6 +87,7 @@ public final class RecorderModel {
     private let calendar: any CalendarSource
     private let slides: SlideRecorder?
     private let persistSlides: @Sendable (Bool) -> Void
+    private let hotkey: (any MarkHotkey)?
     private var enabledIDs: Set<String>
     private var names: [String: String]
     private enum StartNote { case noneSelected(String), missing(String?), unavailable }
@@ -107,7 +114,8 @@ public final class RecorderModel {
         persistOutput: @escaping @Sendable (URL) -> Void = { _ in },
         slides: SlideRecorder? = nil,
         slidesOn: Bool = false,
-        persistSlides: @escaping @Sendable (Bool) -> Void = { _ in }
+        persistSlides: @escaping @Sendable (Bool) -> Void = { _ in },
+        hotkey: (any MarkHotkey)? = nil
     ) {
         self.engine = engine
         self.catalog = catalog
@@ -123,6 +131,7 @@ public final class RecorderModel {
         self.slides = slides
         self.slidesOn = slidesOn
         self.persistSlides = persistSlides
+        self.hotkey = hotkey
         lastSessionDir = engine.lastSessionDir
     }
 
@@ -132,6 +141,10 @@ public final class RecorderModel {
     }
     public var canStartStop: Bool { !finalizing && !starting && (isRecording || rows.contains(where: \.enabled)) }
     public var canMark: Bool { phase == .recording && !finalizing }
+    public var hotkeyHint: String? {
+        guard isRecording, let hotkeyAllowed else { return nil }
+        return hotkeyAllowed ? "Double-tap right ⌥ to mark" : "Allow Input Monitoring for the ⌥⌥ hotkey"
+    }
     public var markRows: [MarkRow] {
         marks.enumerated().map { i, m in MarkRow(id: m.id, time: Self.format(seconds: m.seconds), title: m.title(number: i + 1)) }
     }
@@ -230,6 +243,7 @@ public final class RecorderModel {
     public func stopAndFinalize() async {
         saveComment()
         slides?.stop()
+        stopHotkey()
         finalizing = true
         let engine = self.engine
         guard let dir = await Task.detached(operation: { engine.stop() }).value else {
@@ -262,7 +276,10 @@ public final class RecorderModel {
         guard !starting else { return }
         let status = engine.status(at: now)
         let stoppedItself = phase != .idle && status.phase == .idle && !finalizing
-        if status.phase == .idle { slides?.stop() }
+        if status.phase == .idle {
+            slides?.stop()
+            stopHotkey()
+        }
         phase = status.phase
         elapsed = Self.format(seconds: status.phase == .idle ? 0 : status.elapsedSeconds)
         var notes: [String] = []
@@ -320,6 +337,12 @@ public final class RecorderModel {
         if stoppedItself, let dir = engine.lastSessionDir, dir != finalizedDir {
             finalizeSession(dir)
         }
+    }
+
+    private func stopHotkey() {
+        guard hotkeyAllowed != nil else { return }
+        hotkey?.stop()
+        hotkeyAllowed = nil
     }
 
     nonisolated public static func format(seconds: Double) -> String {
@@ -388,6 +411,7 @@ public final class RecorderModel {
         do {
             _ = try await Task.detached { try engine.start(specs: startSpecs, title: title, slides: recordSlides) }.value
             if recordSlides { slides?.start { try engine.addFrame(atNanos: $0, data: $1) } }
+            hotkeyAllowed = hotkey?.start { [weak self] in Task { @MainActor in self?.mark() } }
             self.title = title
             sessionMics = startSpecs.filter { $0.kind == .mic }
             stopErrorSeen = false
