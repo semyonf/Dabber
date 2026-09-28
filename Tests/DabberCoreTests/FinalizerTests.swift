@@ -208,13 +208,17 @@ extension FinalizerTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".caf") }.isEmpty)
     }
 
-    @Test func unreadableSegmentFailsTheFinalizeAndKeepsTheCAFs() throws {
+    @Test func unreadableSegmentIsSkippedKeptAndReported() throws {
         let dir = try makeSession()
         try Data(repeating: 1, count: 100).write(to: dir.appendingPathComponent("mic - A.seg001.caf"))
-        #expect(throws: (any Error).self) { try Finalizer.run(dir) }
-        let cafs = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".caf") }.sorted()
-        #expect(cafs == ["computer audio.seg000.caf", "mic - A.seg000.caf", "mic - A.seg001.caf"])
-        #expect(try SessionManifest.load(from: dir).finalize == nil)
+        let report = try Finalizer.run(dir)
+        #expect(report.totalFrames == 144_000)
+        #expect(report.unreadable == ["mic - A.seg001.caf"])
+        #expect(try rms(dir.appendingPathComponent("mic - A.m4a"), from: 10_000, frames: 4_800) > 0.2)
+        #expect(try rms(dir.appendingPathComponent("mic - A.m4a"), from: 100_000, frames: 4_800) < 0.01)
+        let cafs = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".caf") }
+        #expect(cafs == ["mic - A.seg001.caf"])
+        #expect(try SessionManifest.load(from: dir).finalize == report)
     }
 
     private func decode(_ url: URL) throws -> [Float] {

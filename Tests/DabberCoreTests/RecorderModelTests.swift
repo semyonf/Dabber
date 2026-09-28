@@ -782,12 +782,13 @@ private func slidesModel(
     e.dir = FileManager.default.temporaryDirectory.appendingPathComponent("sv-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: e.dir, withIntermediateDirectories: true)
     var manifest = SessionManifest(appVersion: "t", startedAt: Date(), sessionStartNanos: 1)
-    manifest.finalize = FinalizeReport(totalFrames: 1, gaps: [], driftMillis: [:], resampled: [], slidesError: "no frames")
+    manifest.finalize = FinalizeReport(
+        totalFrames: 1, gaps: [], driftMillis: [:], resampled: [], slidesError: "no frames", unreadable: ["mic - A.seg001.caf"])
     try manifest.save(to: e.dir)
     let (m, _) = slidesModel(e, on: true)
     await m.startStop()
     await m.startStop()
-    #expect(m.warning == "Slides video failed: no frames")
+    #expect(m.warning == "Slides video failed: no frames; Could not read: mic - A.seg001.caf")
     m.menuClosed()
     #expect(m.warning == nil)
 }

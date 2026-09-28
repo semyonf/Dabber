@@ -74,12 +74,17 @@ public struct FinalizeReport: Codable, Equatable, Sendable {
     public var driftMillis: [String: Double]
     public var resampled: [String]
     public var slidesError: String?
-    public init(totalFrames: Int, gaps: [GapRecord], driftMillis: [String: Double], resampled: [String], slidesError: String? = nil) {
+    public var unreadable: [String]?
+    public init(
+        totalFrames: Int, gaps: [GapRecord], driftMillis: [String: Double], resampled: [String], slidesError: String? = nil,
+        unreadable: [String]? = nil
+    ) {
         self.totalFrames = totalFrames
         self.gaps = gaps
         self.driftMillis = driftMillis
         self.resampled = resampled
         self.slidesError = slidesError
+        self.unreadable = unreadable
     }
 }
 

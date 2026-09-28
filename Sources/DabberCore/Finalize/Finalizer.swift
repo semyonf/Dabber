@@ -18,14 +18,19 @@ public enum Finalizer {
         var manifest = try SessionManifest.load(from: dir)
         var tracks: [Track] = []
         var rendered: [String] = []
+        var unreadable: [String] = []
         for source in manifest.sources {
             var present: [SegmentRecord] = []
             var files: [CAFSegment] = []
             for record in source.segments {
                 let url = dir.appendingPathComponent(record.file)
                 guard FileManager.default.fileExists(atPath: url.path) else { continue }
+                guard let caf = try? CAFSegment(url: url) else {
+                    unreadable.append(record.file)
+                    continue
+                }
                 present.append(record)
-                files.append(try CAFSegment(url: url))
+                files.append(caf)
             }
             let plans = FinalizePlan.make(present, fileFrames: files.map(\.frames))
             let planned = Set(plans.map(\.file))
@@ -80,7 +85,8 @@ public enum Finalizer {
             }
         }
         let report = FinalizeReport(
-            totalFrames: total, gaps: gaps, driftMillis: drift, resampled: resampled, slidesError: slidesError)
+            totalFrames: total, gaps: gaps, driftMillis: drift, resampled: resampled, slidesError: slidesError,
+            unreadable: unreadable.isEmpty ? nil : unreadable)
         manifest.finalize = report
         try manifest.save(to: dir)
         for name in rendered {

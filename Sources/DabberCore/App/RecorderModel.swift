@@ -371,8 +371,9 @@ public final class RecorderModel {
                 lastSessionDir = dir
                 errorText = "finalize failed: \(error)"
             }
-            if let done = lastSessionDir, let why = (try? SessionManifest.load(from: done))?.finalize?.slidesError {
-                notices.append("Slides video failed: \(why)")
+            if let done = lastSessionDir, let report = (try? SessionManifest.load(from: done))?.finalize {
+                if let why = report.slidesError { notices.append("Slides video failed: \(why)") }
+                if let files = report.unreadable { notices.append("Could not read: \(files.joined(separator: ", "))") }
             }
             finalizing = false
             finalizeTask = nil
