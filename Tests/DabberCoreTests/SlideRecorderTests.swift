@@ -57,57 +57,57 @@ private func ticking() -> @Sendable () -> UInt64 {
     return { n.add(1, ordering: .relaxed).newValue }
 }
 
-@Test func slidesStoreOnlyChangedScreens() {
+@Test func slidesStoreOnlyChangedScreens() async {
     let white = ScreenGrab(image: screen(), display: 1)
     let black = ScreenGrab(image: screen(gray: 0), display: 1)
     let grabber = FakeGrabber([.success(white), .success(white), .success(black), .success(black)])
     let slides = SlideRecorder(grabber: grabber, interval: .milliseconds(5), clock: ticking())
     let store = Store()
     slides.start { store.add($0, $1) }
-    #expect(waitUntil { store.count == 2 })
+    #expect(await eventually { store.count == 2 })
     #expect(slides.status == .on)
-    Thread.sleep(forTimeInterval: 0.1)
+    try? await Task.sleep(for: .seconds(0.1))
     slides.stop()
     #expect(store.count == 2)
     #expect(store.times == [1, 3])
     #expect(slides.status == nil)
 }
 
-@Test func slidesWithoutPermissionSayWhyAndDoNothing() {
+@Test func slidesWithoutPermissionSayWhyAndDoNothing() async {
     let slides = SlideRecorder(grabber: FakeGrabber(permitted: false, [.success(ScreenGrab(image: screen(), display: 1))]), interval: .milliseconds(5))
     let store = Store()
     slides.start { store.add($0, $1) }
     #expect(slides.status == .noPermission)
-    Thread.sleep(forTimeInterval: 0.05)
+    try? await Task.sleep(for: .seconds(0.05))
     #expect(store.count == 0)
 }
 
-@Test func aFailedGrabIsReportedAndTheNextSuccessClearsIt() {
+@Test func aFailedGrabIsReportedAndTheNextSuccessClearsIt() async {
     let grabber = FakeGrabber([.failure(GrabFailed()), .failure(GrabFailed()), .success(ScreenGrab(image: screen(), display: 1))])
     let slides = SlideRecorder(grabber: grabber, interval: .milliseconds(20))
     let store = Store()
     slides.start { store.add($0, $1) }
-    #expect(waitUntil { slides.status == .failed("grab failed") })
-    #expect(waitUntil { store.count == 1 && slides.status == .on })
+    #expect(await eventually { slides.status == .failed("grab failed") })
+    #expect(await eventually { store.count == 1 && slides.status == .on })
     slides.stop()
 }
 
-@Test func stoppedSlidesStopGrabbing() {
+@Test func stoppedSlidesStopGrabbing() async {
     let grabber = FakeGrabber([.success(ScreenGrab(image: screen(), display: 1)), .success(ScreenGrab(image: screen(), display: 2))])
     let slides = SlideRecorder(grabber: grabber, interval: .milliseconds(5))
     let store = Store()
     slides.start { store.add($0, $1) }
-    #expect(waitUntil { store.count == 2 })
+    #expect(await eventually { store.count == 2 })
     slides.stop()
-    Thread.sleep(forTimeInterval: 0.02)
+    try? await Task.sleep(for: .seconds(0.02))
     let grabs = grabber.grabCount
-    Thread.sleep(forTimeInterval: 0.05)
+    try? await Task.sleep(for: .seconds(0.05))
     #expect(grabber.grabCount == grabs)
     #expect(store.count == 2)
     #expect(slides.status == nil)
 }
 
-@Test func aFailedStoreIsRetriedWithTheSameScreen() {
+@Test func aFailedStoreIsRetriedWithTheSameScreen() async {
     let slides = SlideRecorder(grabber: FakeGrabber([.success(ScreenGrab(image: screen(), display: 1))]), interval: .milliseconds(5))
     let store = Store()
     let once = FailOnce()
@@ -115,6 +115,6 @@ private func ticking() -> @Sendable () -> UInt64 {
         try once.check()
         return store.add(at, data)
     }
-    #expect(waitUntil { store.count == 1 })
+    #expect(await eventually { store.count == 1 })
     slides.stop()
 }

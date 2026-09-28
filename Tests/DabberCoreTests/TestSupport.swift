@@ -44,3 +44,12 @@ func waitUntil(_ condition: () -> Bool) -> Bool {
     }
     return condition()
 }
+
+func eventually(isolation: isolated (any Actor)? = #isolation, _ condition: () -> Bool) async -> Bool {
+    let end = Date().addingTimeInterval(3)
+    while Date() < end {
+        if condition() { return true }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return condition()
+}

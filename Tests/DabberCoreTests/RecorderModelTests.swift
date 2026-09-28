@@ -760,7 +760,7 @@ private func slidesModel(
     let (m, slides) = slidesModel(e, on: true)
     await m.startStop()
     #expect(e.slides == [true])
-    #expect(waitUntil { e.frames.withLock { $0.count } == 1 })
+    #expect(await eventually { e.frames.withLock { $0.count } == 1 })
     #expect(slides.status == .on)
     await m.startStop()
     #expect(slides.status == nil)
