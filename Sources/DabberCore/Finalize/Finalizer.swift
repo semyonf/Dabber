@@ -86,7 +86,7 @@ public enum Finalizer {
         for name in rendered {
             try FileManager.default.removeItem(at: dir.appendingPathComponent(name))
         }
-        if slidesError == nil {
+        if FileManager.default.fileExists(atPath: dir.appendingPathComponent(videoFile).path) {
             try? FileManager.default.removeItem(at: dir.appendingPathComponent(SessionManifest.framesDir))
         }
         return report

@@ -622,4 +622,18 @@ extension FinalizerTests {
         #expect(names == ["computer audio.m4a", "frames", "mic - A.m4a", name + ".m4a", "session.json"])
         #expect(try AVAudioFile(forReading: out.appendingPathComponent(name + ".m4a")).length == 144_000)
     }
+
+    @Test func framesOfASessionWithoutAudioAreKept() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fin-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var m = SessionManifest(appVersion: "t", startedAt: Date(), sessionStartNanos: 10_000_000_000)
+        m.sources = [
+            SourceManifest(kind: .mic, uid: "ap", name: "AirPods", file: "mic - AirPods.m4a", channels: 1, segments: [], restarts: [], overruns: 0),
+        ]
+        try m.save(to: dir)
+        try addFrames(dir, [(0.5, try Frames.heic(screen()))])
+        #expect(try Finalizer.run(dir).totalFrames == 0)
+        let names = Set(try FileManager.default.contentsOfDirectory(atPath: dir.path))
+        #expect(names == ["frames", "mic - AirPods.m4a", "mix.m4a", "session.json"])
+    }
 }
