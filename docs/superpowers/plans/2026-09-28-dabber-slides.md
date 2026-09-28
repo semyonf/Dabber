@@ -26,7 +26,7 @@ Spec: `docs/superpowers/specs/2026-09-28-dabber-screenshots-video-design.md`. Fo
 ## Facts checked for this plan
 
 The complete code of this plan was applied task by task to a clone of this branch at `af8dd1a` outside the repo, one commit per task (on 2026-09-28, macOS 26.7, Swift 6.4 CLT):
-- `scripts/test.sh` exit 0 after every task, with 236, 241, 242, 242, 245, 249, 254, 259, 259, 259 tests. The `SlideRecorder` tests passed 300 repetitions; the whole suite 3 out of 3 after Task 8. Tasks 5, 6 and 7 include three fixes found by the per-task code reviews during execution (writer cancel on a failed feed; frames kept when no video was made; no stale capture status after stop and a retry after a failed store).
+- `scripts/test.sh` exit 0 after every task, with 236, 241, 242, 242, 245, 249, 254, 259, 259, 259 tests. The `SlideRecorder` tests passed 300 repetitions; the whole suite 3 out of 3 after Task 8. Tasks 5, 6, 7 and 9 include four fixes found by the per-task code reviews during execution (writer cancel on a failed feed; frames kept when no video was made; no stale capture status after stop and a retry after a failed store; display lookup without the main thread so headless capture does not hang).
 - `swift build` printed no Swift warnings. `scripts/build-app.sh` built and signed `build/Dabber.app`.
 - A 10-minute sample made with `SlideshowWriter` (frames at 0:00, 4:00, 8:00; tones 220, 440, 660 Hz; chapters "Start", "Слайд 2", "Слайд 3"), checked with ffprobe:
   `codec_name=hevc|codec_tag_string=hvc1|width=1920|height=1080|duration=600.000000`, `codec_name=aac|codec_tag_string=mp4a|duration=600.000000`, a `tx3g` stream, the three chapters with exact times and UTF-8 titles, video packets `0.000000,K__`, `240.000000,K__`, `480.000000,K__`. File size 15.5 MB, of which the audio is 15.5 MB.
@@ -1949,7 +1949,7 @@ git commit -m "feat: record slides switch in the recorder model"
 - Create: `Sources/Dabber/LiveScreenGrabber.swift`
 - Modify: `Sources/Dabber/MenuApp.swift`
 
-`LiveScreenGrabber` finds the display under the mouse pointer, asks ScreenCaptureKit for a screenshot already scaled to at most 1920 wide, without the pointer. Permission: `CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()` (the second call shows the system prompt once). The menu gets a **Record slides** toggle under the sources. `AppDelegate` saves the switch as `recordSlides`. Headless `--record ... --slides` runs the same capture and logs the screen status each second and `FRAMES <count> bytes=<total>` before finalizing, for the hardware check. No unit tests: this code needs the real screen.
+`LiveScreenGrabber` finds the display under the mouse pointer with CoreGraphics (`CGEvent` location + `CGGetDisplaysWithPoint`; the Task 9 review showed that a `MainActor.run` hop never returns in headless mode, which has no run loop), asks ScreenCaptureKit for a screenshot already scaled to at most 1920 wide, without the pointer. Permission: `CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()` (the second call shows the system prompt once). The menu gets a **Record slides** toggle under the sources. `AppDelegate` saves the switch as `recordSlides`. Headless `--record ... --slides` runs the same capture and logs the screen status each second and `FRAMES <count> bytes=<total>` before finalizing, for the hardware check. No unit tests: this code needs the real screen.
 
 - [ ] **Step 1: Make the change**
 
@@ -2043,7 +2043,7 @@ git commit -m "feat: record slides switch in the recorder model"
 `Sources/Dabber/LiveScreenGrabber.swift` (new file):
 
 ```swift
-import AppKit
+import CoreGraphics
 import DabberCore
 import ScreenCaptureKit
 
@@ -2057,7 +2057,7 @@ struct LiveScreenGrabber: ScreenGrabber {
     func allowed() -> Bool { CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() }
 
     func grab() async throws -> ScreenGrab {
-        let id = await MainActor.run { Self.displayUnderCursor() }
+        let id = Self.displayUnderCursor()
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID == id }) ?? content.displays.first else {
             throw GrabError.noDisplay
@@ -2073,10 +2073,11 @@ struct LiveScreenGrabber: ScreenGrabber {
         return ScreenGrab(image: image, display: display.displayID)
     }
 
-    @MainActor private static func displayUnderCursor() -> CGDirectDisplayID? {
-        let point = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) } ?? NSScreen.main
-        return screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+    private static func displayUnderCursor() -> CGDirectDisplayID? {
+        guard let point = CGEvent(source: nil)?.location else { return nil }
+        var id = CGDirectDisplayID(0)
+        var count: UInt32 = 0
+        return CGGetDisplaysWithPoint(point, 1, &id, &count) == .success && count > 0 ? id : nil
     }
 }
 ```
@@ -2287,7 +2288,7 @@ scripts/build-app.sh
 scripts/run-headless.sh build/slides-check/slides.log --record --computer-audio --slides --seconds 30 --work build/slides-check/work --out build/slides-check/out
 ```
 
-While it runs, switch between three different windows, then leave the screen still for 10 s. The first run shows the Screen Recording prompt and logs `screen: noPermission`: allow Dabber in System Settings > Privacy & Security > Screen & System Audio Recording (upper list), then run the command again.
+While it runs, switch between three different windows, then leave the screen still for 10 s. The first run shows the Screen Recording prompt and logs `screen: noPermission`: allow Dabber in System Settings > Privacy & Security > Screen & System Audio Recording (upper list), then run the command again. macOS may also ask from time to time to confirm that Dabber may keep recording the screen; that prompt comes from the system, not from Dabber.
 
 Expected: `t=… | screen: on` lines, `FRAMES <n> bytes=<b>` with `n` about 3-6 and `b / n` about 100 KB or less, a `FINALIZED …` line without `slidesError`, last line ending in ` EXIT 0`.
 
