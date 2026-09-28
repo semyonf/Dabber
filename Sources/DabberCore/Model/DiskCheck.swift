@@ -7,7 +7,7 @@ public enum DiskCheck {
     public static let warnSeconds: Double = 20 * 60
     public static let stopSeconds: Double = 2 * 60
 
-    public static let slidesBytesPerSecond = 50_000
+    public static let slidesBytesPerSecond = 80_000
 
     public static func secondsLeft(freeBytes: Int64, channels: [Int], elapsedSeconds: Double, slides: Bool = false) -> Double {
         let frames = slides ? Double(slidesBytesPerSecond) : 0

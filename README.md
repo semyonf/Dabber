@@ -36,7 +36,7 @@ Dabber is built from source on your Mac. There is no prebuilt download.
   not needed.
 - **Disk space:** about 1.5 GB for the Command Line Tools and up to about 1 GB for the build folders inside the
   repository. While recording, Dabber keeps uncompressed audio in a temporary folder: about 1.4 GB per hour for Mac
-  audio and about 0.7 GB per hour per microphone, plus up to about 180 MB per hour for slides. A recording does not start with less than 2 GB free, and the menu
+  audio and about 0.7 GB per hour per microphone, plus up to about 300 MB per hour for slides. A recording does not start with less than 2 GB free, and the menu
   warns when less than about 20 minutes of recording space is left. Finished files are much smaller (compressed AAC).
 
 ### Permissions the app asks for

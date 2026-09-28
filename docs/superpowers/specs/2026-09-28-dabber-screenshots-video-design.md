@@ -55,8 +55,9 @@ and builds a video where the mix audio plays and each changed screen stays until
 
 ## Disk use
 
-While recording, only changed frames are stored: roughly 100 KB each. Worst case (screen changes all the time):
-1800 frames per hour, about 180 MB per hour, next to about 1.4 GB per hour for Mac audio. The existing free-space
+While recording, only changed frames are stored: about 170 KB each (measured on 2026-09-28, 10 real frames at
+1920x1248; about 48 KB each in the finished video). Worst case (screen changes all the time): about 300 MB per hour,
+next to about 1.4 GB per hour for Mac audio. The existing free-space
 estimate adds this worst case. The finished `.mp4` is about the size of the mix plus the frames.
 
 ## Units
