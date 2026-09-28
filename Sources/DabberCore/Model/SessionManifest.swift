@@ -73,11 +73,23 @@ public struct FinalizeReport: Codable, Equatable, Sendable {
     public var gaps: [GapRecord]
     public var driftMillis: [String: Double]
     public var resampled: [String]
-    public init(totalFrames: Int, gaps: [GapRecord], driftMillis: [String: Double], resampled: [String]) {
+    public var slidesError: String?
+    public init(totalFrames: Int, gaps: [GapRecord], driftMillis: [String: Double], resampled: [String], slidesError: String? = nil) {
         self.totalFrames = totalFrames
         self.gaps = gaps
         self.driftMillis = driftMillis
         self.resampled = resampled
+        self.slidesError = slidesError
+    }
+}
+
+public struct FrameRecord: Codable, Equatable, Sendable {
+    public let offsetNanos: UInt64
+    public let file: String
+
+    public init(offsetNanos: UInt64, file: String) {
+        self.offsetNanos = offsetNanos
+        self.file = file
     }
 }
 
@@ -89,6 +101,7 @@ public struct SessionManifest: Codable, Equatable, Sendable {
     public var sessionStartNanos: UInt64
     public var sources: [SourceManifest] = []
     public var marks: [Mark] = []
+    public var frames: [FrameRecord] = []
     public var title = ""
     public var finalize: FinalizeReport?
 
@@ -98,7 +111,7 @@ public struct SessionManifest: Codable, Equatable, Sendable {
         self.sessionStartNanos = sessionStartNanos
     }
 
-    private enum CodingKeys: String, CodingKey { case appVersion, startedAt, sessionStartNanos, sources, marks, title, finalize }
+    private enum CodingKeys: String, CodingKey { case appVersion, startedAt, sessionStartNanos, sources, marks, frames, title, finalize }
 
     public var name: String { SessionNaming.sessionName(startedAt, title: title) }
 
@@ -109,6 +122,7 @@ public struct SessionManifest: Codable, Equatable, Sendable {
         sessionStartNanos = try c.decode(UInt64.self, forKey: .sessionStartNanos)
         sources = try c.decode([SourceManifest].self, forKey: .sources)
         marks = try c.decodeIfPresent([Mark].self, forKey: .marks) ?? []
+        frames = try c.decodeIfPresent([FrameRecord].self, forKey: .frames) ?? []
         title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
         finalize = try c.decodeIfPresent(FinalizeReport.self, forKey: .finalize)
     }
@@ -129,6 +143,16 @@ public struct SessionManifest: Codable, Equatable, Sendable {
 
     public mutating func removeMark(id: Int) {
         marks.removeAll { $0.id == id }
+    }
+
+    public static let framesDir = "frames"
+
+    @discardableResult
+    public mutating func addFrame(atNanos: UInt64) -> FrameRecord {
+        let offset = atNanos > sessionStartNanos ? atNanos - sessionStartNanos : 0
+        let frame = FrameRecord(offsetNanos: offset, file: "\(Self.framesDir)/\(offset).heic")
+        frames.append(frame)
+        return frame
     }
 
     public func save(to dir: URL) throws {

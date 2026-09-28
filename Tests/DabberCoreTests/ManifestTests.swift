@@ -72,3 +72,19 @@ import Testing
     #expect(AACWriter.bitRate(channels: 2) == 256_000)
     #expect(DiskCheck.secondsLeft(freeBytes: 652_000_000, channels: [2, 1], elapsedSeconds: 0) == 1_000)
 }
+
+@Test func framesAreNamedByOffsetAndOldManifestsHaveNone() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("m-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    var m = SessionManifest(appVersion: "t", startedAt: Date(timeIntervalSince1970: 1_800_000_000), sessionStartNanos: 5_000)
+    #expect(m.addFrame(atNanos: 2_000_005_000) == FrameRecord(offsetNanos: 2_000_000_000, file: "frames/2000000000.heic"))
+    #expect(m.addFrame(atNanos: 10) == FrameRecord(offsetNanos: 0, file: "frames/0.heic"))
+    m.finalize = FinalizeReport(totalFrames: 1, gaps: [], driftMillis: [:], resampled: [], slidesError: "boom")
+    try m.save(to: dir)
+    #expect(try SessionManifest.load(from: dir) == m)
+    let old = #"{"appVersion":"t","startedAt":"2027-01-15T08:00:00Z","sessionStartNanos":1,"sources":[],"finalize":{"totalFrames":1,"gaps":[],"driftMillis":{},"resampled":[]}}"#
+    try Data(old.utf8).write(to: dir.appendingPathComponent("session.json"))
+    let loaded = try SessionManifest.load(from: dir)
+    #expect(loaded.frames.isEmpty)
+    #expect(loaded.finalize?.slidesError == nil)
+}
