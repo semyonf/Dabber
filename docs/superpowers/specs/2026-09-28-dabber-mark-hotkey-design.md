@@ -11,7 +11,7 @@ does not clash with any app is needed.
 
 | Topic | Decision |
 |---|---|
-| Gesture | Double-tap the right Option key (⌥⌥), not configurable |
+| Gesture | Double-tap the left Option key (⌥⌥), not configurable |
 | When | Only while recording; a no-op otherwise |
 | Result | Same as the Mark button: a mark at the moment of the second tap; its comment can be typed in the menu |
 | Feedback | A short system sound when the mark is made |
@@ -20,12 +20,12 @@ does not clash with any app is needed.
 
 ## Behaviour
 
-- A tap is a press and release of the right Option key alone: no other modifier held, no key pressed in between, and
+- A tap is a press and release of the left Option key alone: no other modifier held, no key pressed in between, and
   released within 0.4 s. Two taps whose releases are less than 0.4 s apart make a mark. Any other key or modifier
   in between cancels, so typing ⌥+letter never makes a mark.
 - The keyboard listener exists only while a recording runs. It only observes events and never changes or blocks them.
 - If the system disables the listener (timeout), it is enabled again.
-- While recording, under the Mark button the menu shows "Double-tap right ⌥ to mark", or "Allow Input Monitoring
+- While recording, under the Mark button the menu shows "Double-tap left ⌥ to mark", or "Allow Input Monitoring
   for the ⌥⌥ hotkey" when the permission is missing.
 
 ## Units

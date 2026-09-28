@@ -837,7 +837,7 @@ private func hotkeyModel(_ engine: FakeEngine, _ hotkey: FakeHotkey) -> Recorder
     #expect(hotkey.fire == nil)
     #expect(m.hotkeyHint == nil)
     await m.startStop()
-    #expect(m.hotkeyHint == "Double-tap right ⌥ to mark")
+    #expect(m.hotkeyHint == "Double-tap left ⌥ to mark")
     hotkey.fire?()
     for _ in 0..<20 where m.marks.isEmpty { await Task.yield() }
     #expect(m.marks.count == 1)

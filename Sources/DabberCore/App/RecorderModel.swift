@@ -144,7 +144,7 @@ public final class RecorderModel {
     public var canMark: Bool { phase == .recording && !finalizing }
     public var hotkeyHint: String? {
         guard isRecording, let hotkeyAllowed else { return nil }
-        return hotkeyAllowed ? "Double-tap right ⌥ to mark" : "Allow Input Monitoring for the ⌥⌥ hotkey"
+        return hotkeyAllowed ? "Double-tap left ⌥ to mark" : "Allow Input Monitoring for the ⌥⌥ hotkey"
     }
     public var markRows: [MarkRow] {
         marks.enumerated().map { i, m in MarkRow(id: m.id, time: Self.format(seconds: m.seconds), title: m.title(number: i + 1)) }

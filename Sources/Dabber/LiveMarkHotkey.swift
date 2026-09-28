@@ -2,7 +2,7 @@ import AppKit
 import DabberCore
 
 final class LiveMarkHotkey: MarkHotkey, @unchecked Sendable {
-    private static let rightOption: Int64 = 61
+    private static let leftOption: Int64 = 58
     private static let modifiers: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand, .maskSecondaryFn]
 
     private let lock = NSLock()
@@ -53,7 +53,7 @@ final class LiveMarkHotkey: MarkHotkey, @unchecked Sendable {
             return
         }
         var key = DoubleTap.Key.other
-        if type == .flagsChanged, event.getIntegerValueField(.keyboardEventKeycode) == Self.rightOption {
+        if type == .flagsChanged, event.getIntegerValueField(.keyboardEventKeycode) == Self.leftOption {
             let held = event.flags.intersection(Self.modifiers)
             key = held == .maskAlternate ? .down : held.isEmpty ? .up : .other
         }
