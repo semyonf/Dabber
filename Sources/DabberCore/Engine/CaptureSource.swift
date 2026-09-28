@@ -222,6 +222,7 @@ public class CaptureSource: @unchecked Sendable {
     }
 
     private func restartLocked(reason: String) {
+        pendingRestart?.cancel()
         pendingRestart = nil
         guard wanted, !paused else { return }
         restartEvents.append(RestartEvent(atNanos: HostClock.nowNanos(), reason: reason))

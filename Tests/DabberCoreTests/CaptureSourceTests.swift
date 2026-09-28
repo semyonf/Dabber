@@ -117,6 +117,23 @@ private func makeSource(_ probe: Probe) throws -> FakeDeviceSource {
     source.stop()
 }
 
+@Test func aSecondWakeDuringARetryStartsCaptureOnce() throws {
+    let probe = Probe()
+    let source = try makeSource(probe)
+    source.retryDelay = 0.3
+    try source.start()
+    source.pause()
+    source.streamlessOpens.store(1, ordering: .relaxed)
+    source.resume()
+    #expect(waitUntil { if case .restarting = source.status { true } else { false } })
+    source.resume()
+    #expect(waitUntil { source.status == .running })
+    Thread.sleep(forTimeInterval: 0.5)
+    #expect(probe.starts == 2)
+    source.stop()
+    #expect(!probe.running)
+}
+
 @Test func deviceThatAppearsBeforeItsInputStreamIsRetried() throws {
     let probe = Probe()
     let source = try makeSource(probe)
