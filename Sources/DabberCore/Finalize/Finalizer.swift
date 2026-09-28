@@ -4,6 +4,7 @@ import Synchronization
 public enum Finalizer {
     public static let chunkFrames = 48_000
     public static let mixFile = "mix.m4a"
+    public static let videoFile = "mix.mp4"
 
     private struct Track {
         let base: String
@@ -41,6 +42,7 @@ public enum Finalizer {
                 plans: plans))
         }
         let total = tracks.map(\.reader.totalFrames).max() ?? 0
+        var slidesError: String?
         let writers = try tracks.map { try AACWriter(url: dir.appendingPathComponent($0.base + ".m4a"), channels: $0.channels) }
         let mix = try AACWriter(url: dir.appendingPathComponent(mixFile), channels: 2)
         var start = 0
@@ -65,6 +67,7 @@ public enum Finalizer {
                 for writer in writers { try ChapterWriter.write(chapters, into: writer.url) }
             }
             try ChapterWriter.write(chapters, title: manifest.name, into: mix.url)
+            slidesError = slideshow(manifest, dir: dir, chapters: chapters)
         }
         var gaps: [GapRecord] = []
         var drift: [String: Double] = [:]
@@ -76,13 +79,33 @@ public enum Finalizer {
                 if plan.resample { resampled.append(plan.file) }
             }
         }
-        let report = FinalizeReport(totalFrames: total, gaps: gaps, driftMillis: drift, resampled: resampled)
+        let report = FinalizeReport(
+            totalFrames: total, gaps: gaps, driftMillis: drift, resampled: resampled, slidesError: slidesError)
         manifest.finalize = report
         try manifest.save(to: dir)
         for name in rendered {
             try FileManager.default.removeItem(at: dir.appendingPathComponent(name))
         }
+        if slidesError == nil {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(SessionManifest.framesDir))
+        }
         return report
+    }
+
+    private static func slideshow(_ manifest: SessionManifest, dir: URL, chapters: [Chapter]) -> String? {
+        let slides = manifest.frames
+            .map { Slide(offsetNanos: $0.offsetNanos, url: dir.appendingPathComponent($0.file)) }
+            .filter { FileManager.default.fileExists(atPath: $0.url.path) }
+        guard !slides.isEmpty else { return nil }
+        let out = dir.appendingPathComponent(videoFile)
+        do {
+            try SlideshowWriter.write(
+                audio: dir.appendingPathComponent(mixFile), slides: slides, chapters: chapters, title: manifest.name, to: out)
+            return nil
+        } catch {
+            try? FileManager.default.removeItem(at: out)
+            return "\(error)"
+        }
     }
 
     public static func finish(_ dir: URL) throws -> URL {
@@ -93,6 +116,10 @@ public enum Finalizer {
     public static func rename(_ dir: URL) throws -> URL {
         let name = try SessionManifest.load(from: dir).name
         try FileManager.default.moveItem(at: dir.appendingPathComponent(mixFile), to: dir.appendingPathComponent(name + ".m4a"))
+        let video = dir.appendingPathComponent(videoFile)
+        if FileManager.default.fileExists(atPath: video.path) {
+            try FileManager.default.moveItem(at: video, to: dir.appendingPathComponent(name + ".mp4"))
+        }
         let parent = dir.deletingLastPathComponent()
         var n = 1
         while true {

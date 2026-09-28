@@ -581,3 +581,45 @@ extension FinalizerTests {
         #expect(!FileManager.default.fileExists(atPath: out.path))
     }
 }
+
+extension FinalizerTests {
+    private func addFrames(_ dir: URL, _ items: [(seconds: Double, data: Data)]) throws {
+        var m = try SessionManifest.load(from: dir)
+        for item in items {
+            let frame = m.addFrame(atNanos: m.sessionStartNanos + UInt64(item.seconds * 1e9))
+            let url = dir.appendingPathComponent(frame.file)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try item.data.write(to: url)
+        }
+        try m.save(to: dir)
+    }
+
+    @Test func framesBecomeTheSlideshowAndAreDeletedAfterwards() async throws {
+        let (_, dir) = try namedSession("Demo")
+        try addFrames(dir, [(0.5, try Frames.heic(screen())), (1.5, try Frames.heic(screen(gray: 0)))])
+        var m = try SessionManifest.load(from: dir)
+        m.addMark(atNanos: m.sessionStartNanos + 1_000_000_000)
+        try m.save(to: dir)
+        let out = try Finalizer.finish(dir)
+        let name = SessionNaming.sessionName(startedAt, title: "Demo")
+        #expect(try SessionManifest.load(from: out).finalize?.slidesError == nil)
+        let names = Set(try FileManager.default.contentsOfDirectory(atPath: out.path))
+        #expect(names == ["computer audio.m4a", "marks.txt", "mic - A.m4a", name + ".m4a", name + ".mp4", "session.json"])
+        let video = out.appendingPathComponent(name + ".mp4")
+        #expect(try audioBytes(video) == audioBytes(out.appendingPathComponent(name + ".m4a")))
+        #expect(try await chapterList(video) == ["0.000 Start", "1.000 Mark 1"])
+        #expect(try await titleTag(video) == name)
+        #expect(try videoTimes(video) == [0, 0.5, 1.5])
+    }
+
+    @Test func aBrokenFrameKeepsTheAudioAndTheFramesAndReportsTheError() throws {
+        let (_, dir) = try namedSession("Broken")
+        try addFrames(dir, [(0.5, Data([1, 2, 3]))])
+        let out = try Finalizer.finish(dir)
+        let name = SessionNaming.sessionName(startedAt, title: "Broken")
+        #expect(try SessionManifest.load(from: out).finalize?.slidesError == "500000000.heic: could not decode frame")
+        let names = Set(try FileManager.default.contentsOfDirectory(atPath: out.path))
+        #expect(names == ["computer audio.m4a", "frames", "mic - A.m4a", name + ".m4a", "session.json"])
+        #expect(try AVAudioFile(forReading: out.appendingPathComponent(name + ".m4a")).length == 144_000)
+    }
+}

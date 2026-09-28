@@ -98,6 +98,24 @@ private let otherVolume = Mover(move: { _, _ in throw DeliveryError.otherVolume 
     }
 }
 
+@Test func acrossVolumesFilesInSubfoldersAreCheckedToo() throws {
+    let work = try temp("work"), out = try temp("out")
+    let dir = try session(in: work, folder: name)
+    try FileManager.default.createDirectory(at: dir.appendingPathComponent("frames"), withIntermediateDirectories: false)
+    try audio.write(to: dir.appendingPathComponent("frames/1.heic"))
+    let moved = try Delivery.deliver(dir, into: out, mover: otherVolume)
+    #expect(try Data(contentsOf: moved.appendingPathComponent("frames/1.heic")) == audio)
+    let dir2 = try session(in: work, folder: name)
+    try FileManager.default.createDirectory(at: dir2.appendingPathComponent("frames"), withIntermediateDirectories: false)
+    try audio.write(to: dir2.appendingPathComponent("frames/1.heic"))
+    let short = Mover(move: otherVolume.move) { from, to in
+        try FileManager.default.copyItem(at: from, to: to)
+        try Data([7]).write(to: to.appendingPathComponent("frames/1.heic"))
+    }
+    #expect(throws: DeliveryError.copyMismatch(name)) { try Delivery.deliver(dir2, into: out, mover: short) }
+    #expect(try Data(contentsOf: dir2.appendingPathComponent("frames/1.heic")) == audio)
+}
+
 @Test func aCopyLeftByAnInterruptedDeliveryIsReplaced() throws {
     let work = try temp("work"), out = try temp("out")
     let stale = out.appendingPathComponent("." + name + Delivery.partialSuffix)

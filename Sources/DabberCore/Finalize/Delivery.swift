@@ -117,8 +117,9 @@ public enum Delivery {
 
     private static func listing(_ dir: URL) throws -> [String: Int] {
         var sizes: [String: Int] = [:]
-        for file in try FileManager.default.contentsOfDirectory(atPath: dir.path) {
-            sizes[file] = try FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(file).path)[.size] as? Int
+        for file in try FileManager.default.subpathsOfDirectory(atPath: dir.path) {
+            let attrs = try FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(file).path)
+            sizes[file] = attrs[.type] as? FileAttributeType == .typeDirectory ? -1 : attrs[.size] as? Int
         }
         return sizes
     }
