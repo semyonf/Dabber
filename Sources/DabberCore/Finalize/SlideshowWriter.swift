@@ -26,6 +26,8 @@ public struct Slide: Equatable, Sendable {
 }
 
 public enum SlideshowWriter {
+    static let quality = 0.5
+
     public static func write(audio: URL, slides: [Slide], chapters: [Chapter], title: String?, to out: URL) throws {
         let frames = try AVAudioFile(forReading: audio).length
         let end = CMTime(value: frames, timescale: CMTimeScale(Timeline.rate))
@@ -40,7 +42,7 @@ public enum SlideshowWriter {
         let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.hevc, AVVideoWidthKey: size.width, AVVideoHeightKey: size.height,
             AVVideoCompressionPropertiesKey: [
-                AVVideoAllowFrameReorderingKey: false, AVVideoMaxKeyFrameIntervalKey: 1,
+                AVVideoAllowFrameReorderingKey: false, AVVideoMaxKeyFrameIntervalKey: 1, AVVideoQualityKey: quality,
             ],
         ])
         writer.add(video)
