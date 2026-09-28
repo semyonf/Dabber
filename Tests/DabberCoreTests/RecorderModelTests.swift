@@ -852,3 +852,102 @@ private func hotkeyModel(_ engine: FakeEngine, _ hotkey: FakeHotkey) -> Recorder
     #expect(hotkey.stops == 1)
     #expect(hotkey.fire == nil)
 }
+
+private final class SlowStopEngine: RecordingEngine, @unchecked Sendable {
+    let lock = NSLock()
+    var phaseValue: RecorderPhase = .idle
+    var lastSessionDir: URL?
+    let gate = DispatchSemaphore(value: 0)
+    let dir = URL(fileURLWithPath: "/tmp/slow-stop")
+    var phase: RecorderPhase { lock.withLock { phaseValue } }
+
+    func start(specs: [SourceSpec], title: String, slides: Bool) throws -> URL {
+        lock.withLock { phaseValue = .recording }
+        return dir
+    }
+
+    func stop() -> URL? {
+        let stopping = lock.withLock { () -> Bool in
+            guard phaseValue == .recording else { return false }
+            phaseValue = .stopping
+            return true
+        }
+        guard stopping else { return nil }
+        gate.wait()
+        lock.withLock {
+            phaseValue = .idle
+            lastSessionDir = dir
+        }
+        return dir
+    }
+
+    func setTitle(_ title: String) {}
+    func status(at now: Date) -> RecorderStatus {
+        RecorderStatus(phase: phase, elapsedSeconds: 1, sources: [], sessionDir: nil, lastError: nil)
+    }
+    func addMark(atNanos: UInt64) -> [Mark] { [] }
+    func setMarkText(id: Int, _ text: String) -> [Mark] { [] }
+    func removeMark(id: Int) -> [Mark] { [] }
+    func addFrame(atNanos: UInt64, data: Data) throws -> Bool { false }
+}
+
+private final class Count: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    var value: Int { lock.withLock { n } }
+    func add() { lock.withLock { n += 1 } }
+}
+
+@MainActor
+private func slowStopModel(_ engine: SlowStopEngine, finalized: Count) -> RecorderModel {
+    let m = RecorderModel(
+        engine: engine, catalog: FakeCatalog(devices: [airpods]), enabledIDs: ["computer", "ap"], persist: { _ in },
+        finalize: { dir, _ in
+            finalized.add()
+            return dir
+        })
+    m.refreshDevices()
+    return m
+}
+
+@MainActor @Test func quitDuringAStopWaitsForItsFinalize() async {
+    let e = SlowStopEngine()
+    let finalized = Count()
+    let m = slowStopModel(e, finalized: finalized)
+    await m.startStop()
+    let stopping = Task { await m.startStop() }
+    while e.phase != .stopping { await Task.yield() }
+    let quitDone = Mutex(false)
+    let quit = Task {
+        await m.prepareToQuit()
+        quitDone.withLock { $0 = true }
+    }
+    try? await Task.sleep(for: .milliseconds(200))
+    #expect(!quitDone.withLock { $0 })
+    #expect(m.finalizing)
+    e.gate.signal()
+    await quit.value
+    await stopping.value
+    #expect(finalized.value == 1)
+    #expect(!m.finalizing)
+}
+
+@MainActor @Test func aSecondStopDuringAStopFinalizesOnce() async {
+    let e = SlowStopEngine()
+    let finalized = Count()
+    let m = slowStopModel(e, finalized: finalized)
+    await m.startStop()
+    let first = Task { await m.startStop() }
+    while e.phase != .stopping { await Task.yield() }
+    let second = Task { await m.startStop() }
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(m.finalizing)
+    #expect(m.recordTitle == "Finalizing…")
+    e.gate.signal()
+    while e.phase != .idle { await Task.yield() }
+    m.tick()
+    await first.value
+    await second.value
+    #expect(finalized.value == 1)
+    #expect(!m.finalizing)
+}

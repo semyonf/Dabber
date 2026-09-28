@@ -97,6 +97,7 @@ public final class RecorderModel {
     private var starting = false
     private var finalizedDir: URL?
     private var finalizeTask: Task<Void, Never>?
+    private var stopTask: Task<Void, Never>?
     private var quitting = false
     private var stopErrorSeen = false
     private var notices: [String] = []
@@ -241,21 +242,27 @@ public final class RecorderModel {
     }
 
     public func stopAndFinalize() async {
+        if let stopTask { return await stopTask.value }
         saveComment()
         slides?.stop()
         stopHotkey()
         finalizing = true
         let engine = self.engine
-        guard let dir = await Task.detached(operation: { engine.stop() }).value else {
-            finalizing = finalizeTask != nil
-            return
+        let task = Task {
+            guard let dir = await Task.detached(operation: { engine.stop() }).value else {
+                finalizing = finalizeTask != nil
+                return
+            }
+            await finalizeSession(dir).value
         }
-        await finalizeSession(dir).value
+        stopTask = task
+        await task.value
+        stopTask = nil
     }
 
     public func prepareToQuit() async {
         quitting = true
-        if isRecording { await stopAndFinalize() }
+        if isRecording || stopTask != nil { await stopAndFinalize() }
         await finalizeTask?.value
     }
 
