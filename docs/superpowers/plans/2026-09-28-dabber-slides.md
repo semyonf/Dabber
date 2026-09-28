@@ -26,7 +26,7 @@ Spec: `docs/superpowers/specs/2026-09-28-dabber-screenshots-video-design.md`. Fo
 ## Facts checked for this plan
 
 The complete code of this plan was applied task by task to a clone of this branch at `af8dd1a` outside the repo, one commit per task (on 2026-09-28, macOS 26.7, Swift 6.4 CLT):
-- `scripts/test.sh` exit 0 after every task, with 236, 241, 242, 242, 245, 248, 252, 257, 257, 257 tests. The `SlideRecorder` tests passed 5 runs out of 5; the whole suite 3 out of 3 after Task 8.
+- `scripts/test.sh` exit 0 after every task, with 236, 241, 242, 242, 245, 249, 253, 258, 258, 258 tests. The `SlideRecorder` tests passed 5 runs out of 5; the whole suite 3 out of 3 after Task 8. Tasks 5 and 6 include two fixes found by the per-task code reviews during execution (writer cancel on a failed feed; frames kept when no video was made).
 - `swift build` printed no Swift warnings. `scripts/build-app.sh` built and signed `build/Dabber.app`.
 - A 10-minute sample made with `SlideshowWriter` (frames at 0:00, 4:00, 8:00; tones 220, 440, 660 Hz; chapters "Start", "Слайд 2", "Слайд 3"), checked with ffprobe:
   `codec_name=hevc|codec_tag_string=hvc1|width=1920|height=1080|duration=600.000000`, `codec_name=aac|codec_tag_string=mp4a|duration=600.000000`, a `tx3g` stream, the three chapters with exact times and UTF-8 titles, video packets `0.000000,K__`, `240.000000,K__`, `480.000000,K__`. File size 15.5 MB, of which the audio is 15.5 MB.
@@ -45,6 +45,7 @@ The user plays the 10-minute sample `sample.mp4` (handed over in chat) in QuickT
 - Files: `frames/<offsetNanos>.heic`, quality 0.8. The manifest is saved after each kept frame.
 - Video: `.mp4`, HEVC tagged `hvc1`, frame reordering off, a key frame at least every 60 s of media time (`SlideshowWriter.keyFrameSeconds`). Chapters are linked from the video and the audio track.
 - The spec's "Screen: on" status line is dropped: the checked **Record slides** toggle already says it is on. Problems are warnings: `Screen: no permission (Privacy & Security > Screen & System Audio Recording)`, `Screen: <error>`, and after the finalize `Slides video failed: <error>` (cleared once the menu was seen). The spec is updated to match.
+- `frames/` is deleted only when the `.mp4` was made (found by the Task 6 code review: a session without any audio would otherwise lose its only record).
 - A failed video keeps `frames/` in the delivered folder, so the copy check across volumes (`Delivery.listing`) now compares every file in subfolders.
 - Permission is asked at Record with `CGRequestScreenCaptureAccess()`. Without it the session records sound only and shows the warning.
 
@@ -1150,7 +1151,7 @@ git commit -m "feat: slideshow writer builds an HEVC mp4 from frames and the mix
 - Modify: `Tests/DabberCoreTests/DeliveryTests.swift`
 - Modify: `Tests/DabberCoreTests/FinalizerTests.swift`
 
-After the mix has its chapters, `Finalizer.run` makes `mix.mp4` from the frames whose files exist. Success deletes `frames/` after the report is saved. Failure removes the partial `.mp4`, keeps `frames/` and writes the error into the report; the audio files are delivered as usual. `rename` renames `mix.mp4` with the mix. Because `frames/` can now reach delivery, the copy check across volumes compares every file in subfolders, not only the top level.
+After the mix has its chapters, `Finalizer.run` makes `mix.mp4` from the frames whose files exist. When the `.mp4` exists, `frames/` is deleted after the report is saved; otherwise (failure, or a session without any audio) the frames are kept. Failure removes the partial `.mp4`, keeps `frames/` and writes the error into the report; the audio files are delivered as usual. `rename` renames `mix.mp4` with the mix. Because `frames/` can now reach delivery, the copy check across volumes compares every file in subfolders, not only the top level.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1187,7 +1188,7 @@ After the mix has its chapters, `Finalizer.run` makes `mix.mp4` from the frames 
 `Tests/DabberCoreTests/FinalizerTests.swift`:
 
 ```diff
-@@ -581,3 +581,45 @@ extension FinalizerTests {
+@@ -581,3 +581,59 @@ extension FinalizerTests {
          #expect(!FileManager.default.fileExists(atPath: out.path))
      }
  }
@@ -1232,6 +1233,20 @@ After the mix has its chapters, `Finalizer.run` makes `mix.mp4` from the frames 
 +        #expect(names == ["computer audio.m4a", "frames", "mic - A.m4a", name + ".m4a", "session.json"])
 +        #expect(try AVAudioFile(forReading: out.appendingPathComponent(name + ".m4a")).length == 144_000)
 +    }
++
++    @Test func framesOfASessionWithoutAudioAreKept() throws {
++        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fin-\(UUID().uuidString)")
++        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
++        var m = SessionManifest(appVersion: "t", startedAt: Date(), sessionStartNanos: 10_000_000_000)
++        m.sources = [
++            SourceManifest(kind: .mic, uid: "ap", name: "AirPods", file: "mic - AirPods.m4a", channels: 1, segments: [], restarts: [], overruns: 0),
++        ]
++        try m.save(to: dir)
++        try addFrames(dir, [(0.5, try Frames.heic(screen()))])
++        #expect(try Finalizer.run(dir).totalFrames == 0)
++        let names = Set(try FileManager.default.contentsOfDirectory(atPath: dir.path))
++        #expect(names == ["frames", "mic - AirPods.m4a", "mix.m4a", "session.json"])
++    }
 +}
 ```
 
@@ -1239,7 +1254,7 @@ After the mix has its chapters, `Finalizer.run` makes `mix.mp4` from the frames 
 
 Run: `scripts/test.sh; echo "exit=$?"`
 
-Expected: no build error; `framesBecomeTheSlideshowAndAreDeletedAfterwards`, `aBrokenFrameKeepsTheAudioAndTheFramesAndReportsTheError` and `acrossVolumesFilesInSubfoldersAreCheckedToo` fail. `exit=1`.
+Expected: no build error; `framesBecomeTheSlideshowAndAreDeletedAfterwards`, `aBrokenFrameKeepsTheAudioAndTheFramesAndReportsTheError`, `framesOfASessionWithoutAudioAreKept` and `acrossVolumesFilesInSubfoldersAreCheckedToo` fail. `exit=1`.
 
 - [ ] **Step 3: Implement**
 
@@ -1299,7 +1314,7 @@ Expected: no build error; `framesBecomeTheSlideshowAndAreDeletedAfterwards`, `aB
          for name in rendered {
              try FileManager.default.removeItem(at: dir.appendingPathComponent(name))
          }
-+        if slidesError == nil {
++        if FileManager.default.fileExists(atPath: dir.appendingPathComponent(videoFile).path) {
 +            try? FileManager.default.removeItem(at: dir.appendingPathComponent(SessionManifest.framesDir))
 +        }
          return report
@@ -1341,7 +1356,7 @@ Expected: no build error; `framesBecomeTheSlideshowAndAreDeletedAfterwards`, `aB
 
 Run: `scripts/test.sh; echo "exit=$?"`
 
-Expected: `Test run with 248 tests in 2 suites passed`, `exit=0`.
+Expected: `Test run with 249 tests in 2 suites passed`, `exit=0`.
 
 - [ ] **Step 5: Commit**
 
@@ -1549,7 +1564,7 @@ public final class SlideRecorder: @unchecked Sendable {
 
 Run: `scripts/test.sh; echo "exit=$?"`
 
-Expected: `Test run with 252 tests in 2 suites passed`, `exit=0`.
+Expected: `Test run with 253 tests in 2 suites passed`, `exit=0`.
 
 - [ ] **Step 5: Commit**
 
@@ -1875,7 +1890,7 @@ Expected: build error: `FakeEngine` does not conform to `RecordingEngine`, `Reco
 
 Run: `scripts/test.sh; echo "exit=$?"`
 
-Expected: `Test run with 257 tests in 2 suites passed`, `exit=0`.
+Expected: `Test run with 258 tests in 2 suites passed`, `exit=0`.
 
 - [ ] **Step 5: Commit**
 
@@ -2043,7 +2058,7 @@ struct LiveScreenGrabber: ScreenGrabber {
 
 Run: `scripts/test.sh; echo "exit=$?"`
 
-Expected: `Test run with 257 tests in 2 suites passed`, `exit=0`. Then run `scripts/build-app.sh; echo "exit=$?"`. Expected: `Build complete!`, a `designated => identifier "local.dabber.Dabber"` line, `exit=0`.
+Expected: `Test run with 258 tests in 2 suites passed`, `exit=0`. Then run `scripts/build-app.sh; echo "exit=$?"`. Expected: `Build complete!`, a `designated => identifier "local.dabber.Dabber"` line, `exit=0`.
 
 - [ ] **Step 3: Commit**
 
@@ -2212,7 +2227,7 @@ Both READMEs: the feature bullet, disk use, the Screen Recording permission, the
 
 Run: `scripts/test.sh; echo "exit=$?"`
 
-Expected: `Test run with 257 tests in 2 suites passed`, `exit=0`.
+Expected: `Test run with 258 tests in 2 suites passed`, `exit=0`.
 
 - [ ] **Step 3: Commit**
 
