@@ -2285,7 +2285,7 @@ git commit -m "docs: slides in the README"
 
 ```bash
 scripts/build-app.sh
-scripts/run-headless.sh build/slides-check/slides.log --record --computer-audio --slides --seconds 30 --work build/slides-check/work --out build/slides-check/out
+scripts/run-headless.sh build/slides-check/slides.log --record --computer-audio --slides --seconds 30 --work "$PWD/build/slides-check/work" --out "$PWD/build/slides-check/out"
 ```
 
 While it runs, switch between three different windows, then leave the screen still for 10 s. The first run shows the Screen Recording prompt and logs `screen: noPermission`: allow Dabber in System Settings > Privacy & Security > Screen & System Audio Recording (upper list), then run the command again. macOS may also ask from time to time to confirm that Dabber may keep recording the screen; that prompt comes from the system, not from Dabber.
