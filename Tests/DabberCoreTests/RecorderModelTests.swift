@@ -385,7 +385,8 @@ private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], fi
     #expect(m.elapsed == "1:01")
     #expect(m.rows[0].levelDb == -12)
     #expect(m.rows[1].status == .restarting("nsrt"))
-    #expect(m.warning == "AirPods: no signal for 10 s; AirPods: restarting (nsrt)")
+    #expect(!m.rows[1].silent)
+    #expect(m.warning == "AirPods: restarting (nsrt)")
 }
 
 @MainActor @Test func startErrorIsShownNotThrown() async {

@@ -305,10 +305,10 @@ public final class RecorderModel {
             let snapshot = status.sources.first { next[i].id == ($0.spec.kind == .computer ? Self.computerID : $0.spec.uid) }
             next[i].levelDb = snapshot?.levelDb ?? -160
             next[i].status = snapshot?.status
-            next[i].silent = snapshot?.silent ?? false
+            next[i].silent = snapshot.map { $0.silent && $0.status == .running } ?? false
             guard let snapshot else { continue }
             if snapshot.status == .waitingForDevice, absentAtStart.contains(next[i].id) { continue }
-            if snapshot.silent { notes.append("\(next[i].label): no signal for 10 s") }
+            if next[i].silent { notes.append("\(next[i].label): no signal for 10 s") }
             switch snapshot.status {
             case .restarting(let reason): notes.append("\(next[i].label): restarting (\(reason))")
             case .waitingForDevice: notes.append("\(next[i].label): waiting for device")
