@@ -23,7 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         persistOutput: { UserDefaults.standard.set($0.path, forKey: outputKey) },
         slides: SlideRecorder(grabber: LiveScreenGrabber()),
         slidesOn: UserDefaults.standard.bool(forKey: slidesKey),
-        persistSlides: { UserDefaults.standard.set($0, forKey: slidesKey) })
+        persistSlides: { UserDefaults.standard.set($0, forKey: slidesKey) },
+        hotkey: LiveMarkHotkey())
 
     private static let feedKey = "virtualMic"
 

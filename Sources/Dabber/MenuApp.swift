@@ -131,6 +131,9 @@ struct MarksView: View {
         VStack(alignment: .leading, spacing: 4) {
             Button("Mark") { model.mark() }
                 .disabled(!model.canMark)
+            if let hint = model.hotkeyHint {
+                Text(hint).font(.caption).foregroundStyle(.secondary)
+            }
             if model.editingMarkID != nil {
                 TextField("Comment (optional)", text: Binding(get: { model.draft }, set: { model.draft = $0 }))
                     .onSubmit { model.saveComment() }
