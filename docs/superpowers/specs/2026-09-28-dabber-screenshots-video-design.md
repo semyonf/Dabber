@@ -1,6 +1,6 @@
 # Dabber: screen snapshots and slideshow video
 
-Date: 2026-09-28. Status: design approved in chat.
+Date: 2026-09-28. Status: design approved in chat; updated 2026-09-28 after prototyping the plan.
 
 ## Why
 
@@ -34,8 +34,9 @@ and builds a video where the mix audio plays and each changed screen stays until
 - A changed frame is written at once as HEIC into `frames/` in the session folder, named by elapsed nanoseconds.
   Its time and file name are added to `session.json` at once, like marks, so crash recovery also builds the video.
 - A capture that takes longer than 2 s does not queue up: the next tick is skipped while one is still running.
-- With the checkbox on, the menu shows one status line under it: "Screen: on" while it works, "Screen: no permission" or
-  "Screen: error" otherwise. Capture problems never stop or affect the audio recording.
+- There is no separate status line: the checked **Record slides** toggle says it is on. Problems go into the
+  existing warning line (the menu bar icon shows the warning): "Screen: no permission (Privacy & Security > Screen &
+  System Audio Recording)" or "Screen: <error>". Capture problems never stop or affect the audio recording.
 
 ### Video (on finalize)
 
@@ -48,6 +49,8 @@ and builds a video where the mix audio plays and each changed screen stays until
 - Chapters and the title tag: the same as the mix `.m4a` (reuse `ChapterWriter`).
 - After a successful build `frames/` is deleted. If the build fails, the `.m4a` files are still delivered, `frames/`
   is kept, and the error is written to `session.json` and shown in the menu.
+  Because `frames/` can then reach the output folder, the copy check for another disk compares files in subfolders
+  too.
 
 ## Disk use
 
@@ -57,12 +60,12 @@ estimate adds this worst case. The finished `.mp4` is about the size of the mix 
 
 ## Units
 
-- `FrameDiff` (DabberCore, Model): thumbnail comparison, "changed or not". Tested with synthetic images.
-- `FrameStore` (DabberCore): HEIC encoding, file naming, manifest records. Tested.
+- `Frames` + `FrameSampler` (DabberCore, Slides): scaling, thumbnail comparison, HEIC. Tested with synthetic images.
+- `SessionRecorder.addFrame` + `SessionManifest.frames`: file naming and manifest records. Tested.
+- `SlideRecorder` (DabberCore, Slides): the 2 s loop behind a `ScreenGrabber` protocol. Tested with a fake grabber.
 - `SlideshowWriter` (DabberCore, Finalize): audio file + list of (time, image) → `.mp4`. Tested with synthetic
-  images and audio: duration, number of video samples and their times, audio sample count unchanged.
-- `ScreenSampler` (Dabber app): the 2 s timer and `ScreenCaptureKit` capture of the display under the cursor.
-  Hardware check only.
+  images and audio: duration, video sample times, codec tag, audio bytes unchanged, chapters, title.
+- `LiveScreenGrabber` (Dabber app): `ScreenCaptureKit` capture of the display under the cursor. Hardware check only.
 
 ## Privacy
 
