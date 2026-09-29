@@ -71,6 +71,9 @@ struct RecordingSection: View {
                     .disabled(!model.canStartStop)
                 Text(model.elapsed).monospacedDigit().foregroundStyle(.secondary)
             }
+            if let finishing = model.finishing {
+                Text(finishing).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
             ForEach(model.rows) { row in
                 HStack {
                     Toggle(row.title, isOn: Binding(get: { row.enabled }, set: { _ in model.toggle(row.id) }))
