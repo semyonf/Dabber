@@ -19,7 +19,7 @@ final class WriterFeed: @unchecked Sendable {
     func run(_ writer: AVAssetWriter, timeout: TimeInterval = 600) throws {
         for i in lanes.indices {
             group.enter()
-            lanes[i].input.requestMediaDataWhenReady(on: DispatchQueue(label: "dabber.feed.\(i)")) { self.feed(i) }
+            lanes[i].input.requestMediaDataWhenReady(on: DispatchQueue(label: "dabber.feed.\(i)", qos: .utility)) { self.feed(i) }
         }
         let done = group.wait(timeout: .now() + timeout) == .success
         if let error = lock.withLock({ failure }) ?? (done ? nil : FeedTimedOut()) {

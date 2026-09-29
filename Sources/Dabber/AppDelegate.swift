@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defaults.set(true, forKey: Self.legacyKey)
         }
         let pending = Finalizer.sessionFolders(root: work)
-        Task.detached {
+        Task.detached(priority: .utility) {
             let failure = Delivery.recover(
                 pending, work: work, output: output,
                 onError: { dir, error in Task { @MainActor in Self.model.recoveryFailed(dir, error) } },
