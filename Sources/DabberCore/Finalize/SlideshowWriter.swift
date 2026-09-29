@@ -26,7 +26,7 @@ public struct Slide: Equatable, Sendable {
 }
 
 public enum SlideshowWriter {
-    static let quality = 0.5
+    static let quality = 0.65
 
     public static func write(audio: URL, slides: [Slide], chapters: [Chapter], title: String?, to out: URL) throws {
         let frames = try AVAudioFile(forReading: audio).length

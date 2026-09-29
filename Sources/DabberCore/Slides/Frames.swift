@@ -18,7 +18,7 @@ public enum FrameError: Error, CustomStringConvertible {
 }
 
 public enum Frames {
-    public static let maxWidth = 1920
+    public static let maxWidth = 3456
     public static let quality = 0.8
     static let thumbWidth = 64
     static let thumbHeight = 36

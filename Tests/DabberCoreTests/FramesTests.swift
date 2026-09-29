@@ -16,16 +16,17 @@ func screen(width: Int = 1920, height: Int = 1080, gray: CGFloat = 1, rects: [CG
     return ctx.makeImage()!
 }
 
-@Test func framesFitIntoAtMost1920WideWithEvenSides() {
-    #expect(Frames.fitSize(width: 3840, height: 2160) == (1920, 1080))
+@Test func framesKeepTheirSizeUpTo3456WideWithEvenSides() {
+    #expect(Frames.fitSize(width: 2560, height: 1664) == (2560, 1664))
+    #expect(Frames.fitSize(width: 5120, height: 2880) == (3456, 1944))
     #expect(Frames.fitSize(width: 1440, height: 900) == (1440, 900))
-    #expect(Frames.fitSize(width: 3456, height: 2234) == (1920, 1240))
+    #expect(Frames.fitSize(width: 3456, height: 2234) == (3456, 2234))
     #expect(Frames.fitSize(width: 1001, height: 601) == (1000, 600))
 }
 
 @Test func largeScreensAreScaledDown() throws {
-    let big = try Frames.scaled(screen(width: 3840, height: 2160))
-    #expect((big.width, big.height) == (1920, 1080))
+    let big = try Frames.scaled(screen(width: 5120, height: 2880))
+    #expect((big.width, big.height) == (3456, 1944))
     let small = screen(width: 1440, height: 900)
     #expect(try Frames.scaled(small) === small)
 }

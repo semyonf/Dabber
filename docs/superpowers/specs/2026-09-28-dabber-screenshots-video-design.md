@@ -16,7 +16,7 @@ and builds a video where the mix audio plays and each changed screen stays until
 | When to capture | With the checkbox on: automatically, every 2 s, during the recording. No button, no hotkey |
 | What to capture | The whole display under the mouse cursor (`ScreenCaptureKit`), without the cursor |
 | Unchanged screen | Frame not stored |
-| Temporary frames | HEIC via `ImageIO`, quality 0.8, scaled down to at most 1920 wide |
+| Temporary frames | HEIC via `ImageIO`, quality 0.8, at the display's own pixel size, scaled down only above 3456 wide |
 | Output | `<name>.mp4` (HEVC + the mix audio) next to `<name>.m4a`; the `.m4a` files are unchanged |
 | Separate images | Not kept: temporary frames are deleted after the video is built |
 | Checkbox off, or no frames stored | No `.mp4`, no capture, no Screen Recording prompt; everything as before |
@@ -27,7 +27,7 @@ and builds a video where the mix audio plays and each changed screen stays until
 
 - Runs only when **Record slides** was on at Record. Starts with the recording, stops with it. Each capture takes the display that contains the
   mouse cursor at that moment.
-- The frame is scaled to at most 1920 wide (even dimensions). Then it is compared with the last stored frame on a
+- The frame keeps the display's pixel size, scaled down only above 3456 wide (even dimensions). Then it is compared with the last stored frame on a
   small grayscale thumbnail; if the difference is below a small threshold, the frame is dropped. The threshold
   is chosen so a blinking text caret or a changing clock does not count as a change. A display switch (cursor moved
   to another monitor) always counts as a change.
@@ -56,8 +56,10 @@ and builds a video where the mix audio plays and each changed screen stays until
 
 ## Disk use
 
-While recording, only changed frames are stored: about 170 KB each (measured on 2026-09-28, 10 real frames at
-1920x1248; about 70 KB each in the finished video at encoder quality 0.5). Worst case (screen changes all the time): about 300 MB per hour,
+While recording, only changed frames are stored. On 2026-09-28 at 1920x1248 they were about 170 KB each (about 70 KB
+in the video at encoder quality 0.5). Since 2026-09-29 frames keep the display's pixel size (2560 wide on the user's
+Mac, about 1.8x the pixels) and the video uses quality 0.65 for readable small text; estimated about 300 KB per
+temporary frame, to be measured. Worst case (screen changes all the time): about 500 MB per hour,
 next to about 1.4 GB per hour for Mac audio. The existing free-space
 estimate adds this worst case. The finished `.mp4` is about the size of the mix plus the frames.
 

@@ -71,7 +71,7 @@ import Testing
     #expect(AACWriter.bitRate(channels: 1) == 96_000)
     #expect(AACWriter.bitRate(channels: 2) == 256_000)
     #expect(DiskCheck.secondsLeft(freeBytes: 652_000_000, channels: [2, 1], elapsedSeconds: 0) == 1_000)
-    #expect(DiskCheck.secondsLeft(freeBytes: 844_000_000, channels: [2, 1], elapsedSeconds: 0, slides: true) == 1_000)
+    #expect(DiskCheck.secondsLeft(freeBytes: 964_000_000, channels: [2, 1], elapsedSeconds: 0, slides: true) == 1_000)
 }
 
 @Test func framesAreNamedByOffsetAndOldManifestsHaveNone() throws {

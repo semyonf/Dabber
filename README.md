@@ -36,7 +36,7 @@ Dabber is built from source on your Mac. There is no prebuilt download.
   not needed.
 - **Disk space:** about 1.5 GB for the Command Line Tools and up to about 1 GB for the build folders inside the
   repository. While recording, Dabber keeps uncompressed audio in a temporary folder: about 1.4 GB per hour for Mac
-  audio and about 0.7 GB per hour per microphone, plus up to about 300 MB per hour for slides. A recording does not start with less than 2 GB free, and the menu
+  audio and about 0.7 GB per hour per microphone, plus up to about 500 MB per hour for slides. A recording does not start with less than 2 GB free, and the menu
   warns when less than about 20 minutes of recording space is left. Finished files are much smaller (compressed AAC).
 
 ### Permissions the app asks for
@@ -160,7 +160,7 @@ recording, Dabber takes a screenshot of the display with the mouse pointer every
 when the screen has changed; a blinking text cursor or the menu bar clock does not count. The pointer itself is not
 in the picture.
 
-After Stop, Dabber makes `<name>.mp4` next to the mix: the same sound, HEVC video, 1920 pixels wide at most, the same
+After Stop, Dabber makes `<name>.mp4` next to the mix: the same sound, HEVC video at the screen's own resolution (3456 pixels wide at most), the same
 chapters. Each kept screenshot is shown until the next one; the first one is shown from 0:00. The screenshots
 are deleted after the video is made. If the video could not be made, the menu says "Slides video failed: …", the
 audio files are complete as usual, and the screenshots stay in the `frames` folder of the recording (HEIC files named
