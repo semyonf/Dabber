@@ -222,10 +222,27 @@ private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], fi
     await m.startStop()
     await m.startStop()
     await m.finishPending()
-    #expect(m.errorText == "finalize failed: no sources selected")
+    #expect(m.errorText == "Could not finish fake-session: no sources selected")
     #expect(m.lastSessionDir == e.dir)
     await m.startStop()
     #expect(m.errorText == nil)
+}
+
+@MainActor @Test func quitDuringAStartStopsTheNewRecording() async {
+    let e = FakeEngine()
+    e.startGate = DispatchSemaphore(value: 0)
+    let m = model(e)
+    let starting = Task { await m.startStop() }
+    while !e.startEntered.load(ordering: .relaxed) { await Task.yield() }
+    let quit = Task { await m.prepareToQuit() }
+    try? await Task.sleep(for: .milliseconds(20))
+    e.startGate?.signal()
+    await starting.value
+    await quit.value
+    #expect(e.phase == .idle)
+    #expect(e.lastSessionDir == e.dir)
+    await m.startStop()
+    #expect(e.started.count == 1)
 }
 
 @MainActor @Test func recordButtonIsDisabledWhileAStartIsInProgress() async {
@@ -913,7 +930,8 @@ private func slidesModel(
     await m.startStop()
     await m.startStop()
     await m.finishPending()
-    #expect(m.warning == "Slides video failed: no frames; Could not read: mic - A.seg001.caf")
+    let name = e.dir.lastPathComponent
+    #expect(m.warning == "\(name): Slides video failed: no frames; \(name): Could not read: mic - A.seg001.caf")
     m.menuClosed()
     #expect(m.warning == nil)
 }

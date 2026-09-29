@@ -243,7 +243,7 @@ public final class RecorderModel {
     }
 
     public func startStop() async {
-        guard !starting else { return }
+        guard !starting, !quitting else { return }
         if isRecording {
             await stopAndFinalize()
         } else {
@@ -271,6 +271,7 @@ public final class RecorderModel {
 
     public func prepareToQuit() async {
         quitting = true
+        while starting { try? await Task.sleep(for: .milliseconds(20)) }
         if isRecording || stopTask != nil { await stopAndFinalize() }
         await finishPending()
     }
@@ -405,10 +406,10 @@ public final class RecorderModel {
             deliveryNote = failed.reason
         case .failure(let error):
             lastSessionDir = dir
-            errorText = "finalize failed: \(error)"
+            errorText = "Could not finish \(dir.lastPathComponent): \(error)"
         }
         if let done = lastSessionDir, let report = (try? SessionManifest.load(from: done))?.finalize {
-            notices += Self.problems(report)
+            notices += Self.problems(report).map { "\(done.lastPathComponent): \($0)" }
         }
         pending.removeAll { $0 == dir }
         if pending.isEmpty { finalizeTask = nil }
@@ -448,6 +449,7 @@ public final class RecorderModel {
             self.title = title
             sessionMics = startSpecs.filter { $0.kind == .mic }
             stopErrorSeen = false
+            finalizedDir = nil
             errorText = nil
         } catch {
             errorText = "\(error)"
