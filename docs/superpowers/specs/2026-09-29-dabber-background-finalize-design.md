@@ -33,12 +33,26 @@ call must be recordable right away.
   priority; only Quit (and tests) wait for it.
 - A session that stopped itself (disk full, write error) is queued the same way.
 - A second Stop, or Quit, during a stop waits for that stop instead of stopping twice.
+- After a stop the model ticks at once, so a session that stopped itself just before Stop or Quit (and was not
+  noticed yet) is queued too.
 
 ## Proof that the live recording does not lose audio
 
 An experiment (not in the regular suite) finalizes a large synthetic session while three simulated live sources
 push IOProc-sized buffers into `RingBuffer` + `TrackWriter` at real-time rate. It counts ring overruns (target 0),
-compares the captured frame counts with the pushed ones, and measures how late the 50 ms drain timer fires.
+compares the captured frame counts with the pushed ones, and measures how old a buffer is when it is drained.
+
+Results on a Mac17,3 (10 cores), 3 live lanes (stereo + 2 mono, 512-frame buffers from a real-time thread):
+
+| Finalize | Session | Finalize time | Overruns | Frames lost | Oldest buffer at drain |
+|---|---|---|---|---|---|
+| model path, `.utility` | 30 min × 3 tracks + 180 slides (1.4 GB) | 138 s | 0 | 0 | 53 ms |
+| `.userInitiated` (for comparison) | same | 96 s | 0 | 0 | 53 ms |
+| model path, `.utility`, 10 busy threads at default QoS | 5 min × 3 tracks + 30 slides | 642 s | 0 | 0 | 112 ms |
+
+The ring holds 256 buffers (about 2.7 s at 512 frames, 48 kHz), so the drain has a wide margin. The price of
+`.utility` is a slower finalize: about 40 % slower on an idle Mac, and much slower while other apps keep every core
+busy.
 
 ## Out of scope
 
