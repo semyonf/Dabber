@@ -68,7 +68,6 @@ public final class RecorderModel {
     public private(set) var warning: String?
     public private(set) var errorText: String?
     public private(set) var lastSessionDir: URL?
-    public private(set) var finalizing = false
     public private(set) var marks: [Mark] = []
     public private(set) var editingMarkID: Int?
     public var draft = ""
@@ -97,6 +96,7 @@ public final class RecorderModel {
     private var starting = false
     private var finalizedDir: URL?
     private var finalizeTask: Task<Void, Never>?
+    private var pending: [URL] = []
     private var stopTask: Task<Void, Never>?
     private var quitting = false
     private var stopErrorSeen = false
@@ -137,11 +137,21 @@ public final class RecorderModel {
     }
 
     public var isRecording: Bool { phase != .idle }
+    public var stopping: Bool { stopTask != nil }
     public var recordTitle: String {
-        finalizing ? (quitting ? "Finalizing before quit…" : "Finalizing…") : isRecording ? "■ Stop" : "● Record"
+        quitting ? "Finalizing before quit…" : stopping ? "Stopping…" : isRecording ? "■ Stop" : "● Record"
     }
-    public var canStartStop: Bool { !finalizing && !starting && (isRecording || rows.contains(where: \.enabled)) }
-    public var canMark: Bool { phase == .recording && !finalizing }
+    public var canStartStop: Bool {
+        !quitting && !stopping && !starting && (isRecording || rows.contains(where: \.enabled))
+    }
+    public var canMark: Bool { phase == .recording && !stopping }
+    public var finishing: String? {
+        switch pending.count {
+        case 0: return nil
+        case 1: return "Finishing: \(pending[0].lastPathComponent)…"
+        default: return "Finishing \(pending.count) recordings…"
+        }
+    }
     public var hotkeyHint: String? {
         guard isRecording, let hotkeyAllowed else { return nil }
         return hotkeyAllowed ? "Double-tap left ⌥ to mark" : "Allow Input Monitoring for the ⌥⌥ hotkey"
@@ -246,15 +256,14 @@ public final class RecorderModel {
         saveComment()
         slides?.stop()
         stopHotkey()
-        finalizing = true
         let engine = self.engine
         let task = Task {
-            defer { stopTask = nil }
-            guard let dir = await Task.detached(operation: { engine.stop() }).value else {
-                finalizing = finalizeTask != nil
-                return
+            defer {
+                stopTask = nil
+                tick()
             }
-            await finalizeSession(dir).value
+            guard let dir = await Task.detached(operation: { engine.stop() }).value else { return }
+            finalizeSession(dir)
         }
         stopTask = task
         await task.value
@@ -263,14 +272,18 @@ public final class RecorderModel {
     public func prepareToQuit() async {
         quitting = true
         if isRecording || stopTask != nil { await stopAndFinalize() }
-        await finalizeTask?.value
+        await finishPending()
+    }
+
+    public func finishPending() async {
+        while let finalizeTask { await finalizeTask.value }
     }
 
     public func menuClosed() {
         saveComment()
         guard warning != nil else { return }
         notices = []
-        if phase == .idle, !finalizing { stopErrorSeen = true }
+        if phase == .idle, !stopping, pending.isEmpty { stopErrorSeen = true }
         tick()
     }
 
@@ -292,7 +305,7 @@ public final class RecorderModel {
     public func tick(now: Date = Date()) {
         guard !starting else { return }
         let status = engine.status(at: now)
-        let stoppedItself = phase != .idle && status.phase == .idle && !finalizing
+        let stoppedItself = phase != .idle && status.phase == .idle && !stopping
         if status.phase == .idle {
             slides?.stop()
             stopHotkey()
@@ -368,35 +381,38 @@ public final class RecorderModel {
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, r) : String(format: "%d:%02d", m, r)
     }
 
-    @discardableResult
-    private func finalizeSession(_ dir: URL) -> Task<Void, Never> {
+    private func finalizeSession(_ dir: URL) {
         finalizedDir = dir
         phase = .idle
-        finalizing = true
+        pending.append(dir)
         let finalize = self.finalize
         let output = outputFolder
-        let task = Task {
-            do {
-                lastSessionDir = try await Task.detached { try finalize(dir, output) }.value
-                errorText = nil
-                deliveryNote = nil
-            } catch let failed as DeliveryFailed {
-                lastSessionDir = failed.dir
-                errorText = nil
-                deliveryNote = failed.reason
-            } catch {
-                lastSessionDir = dir
-                errorText = "finalize failed: \(error)"
-            }
-            if let done = lastSessionDir, let report = (try? SessionManifest.load(from: done))?.finalize {
-                notices += Self.problems(report)
-            }
-            finalizing = false
-            finalizeTask = nil
-            tick()
+        let previous = finalizeTask
+        finalizeTask = Task.detached(priority: .utility) {
+            await previous?.value
+            let result = Result { try finalize(dir, output) }
+            await self.finished(dir, result)
         }
-        finalizeTask = task
-        return task
+    }
+
+    private func finished(_ dir: URL, _ result: Result<URL, any Error>) {
+        switch result {
+        case .success(let done):
+            lastSessionDir = done
+            deliveryNote = nil
+        case .failure(let failed as DeliveryFailed):
+            lastSessionDir = failed.dir
+            deliveryNote = failed.reason
+        case .failure(let error):
+            lastSessionDir = dir
+            errorText = "finalize failed: \(error)"
+        }
+        if let done = lastSessionDir, let report = (try? SessionManifest.load(from: done))?.finalize {
+            notices += Self.problems(report)
+        }
+        pending.removeAll { $0 == dir }
+        if pending.isEmpty { finalizeTask = nil }
+        tick()
     }
 
     private func start() async {

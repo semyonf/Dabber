@@ -32,6 +32,7 @@ private final class FakeEngine: RecordingEngine, @unchecked Sendable {
     }
 
     func stop() -> URL? {
+        guard phase != .idle else { return nil }
         phase = .idle
         lastSessionDir = dir
         return dir
@@ -116,22 +117,115 @@ private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], fi
     #expect(m.rows.map(\.showsLevel) == [true, false, true])
 }
 
-@MainActor @Test func recordButtonFollowsThePhase() async {
-    let e = FakeEngine()
-    let m = model(e, finalized: { _ in Thread.sleep(forTimeInterval: 0.05) })
+@MainActor @Test func recordButtonFollowsThePhaseAndIsFreeWhileTheFinalizeRuns() async {
+    let e = SlowStopEngine()
+    let gate = DispatchSemaphore(value: 0)
+    let m = RecorderModel(
+        engine: e, catalog: FakeCatalog(devices: [airpods]), enabledIDs: ["computer"], persist: { _ in },
+        finalize: { dir, _ in
+            gate.wait()
+            return dir
+        })
+    m.refreshDevices()
     #expect(m.recordTitle == "● Record")
     #expect(m.canStartStop)
     await m.startStop()
     #expect(m.recordTitle == "■ Stop")
     #expect(m.canStartStop)
     let stopping = Task { await m.startStop() }
-    while !m.finalizing { await Task.yield() }
-    #expect(m.recordTitle == "Finalizing…")
+    while e.phase != .stopping { await Task.yield() }
+    #expect(m.recordTitle == "Stopping…")
     #expect(!m.canStartStop)
+    #expect(m.finishing == nil)
+    e.gate.signal()
     await stopping.value
     #expect(m.recordTitle == "● Record")
+    #expect(m.canStartStop)
+    #expect(m.finishing == "Finishing: slow-stop…")
     m.toggle("computer")
     #expect(!m.canStartStop)
+    gate.signal()
+    await m.finishPending()
+    #expect(m.finishing == nil)
+}
+
+@MainActor @Test func recordingAgainWhileEarlierRecordingsFinishOneAtATimeInOrder() async {
+    let e = FakeEngine()
+    let gate = DispatchSemaphore(value: 0)
+    let log = Mutex<[String]>([])
+    let m = model(e) { dir in
+        log.withLock { $0.append("begin " + dir.lastPathComponent) }
+        gate.wait()
+        log.withLock { $0.append("end " + dir.lastPathComponent) }
+    }
+    let a = URL(fileURLWithPath: "/tmp/2026-09-29 10-00 A")
+    let b = URL(fileURLWithPath: "/tmp/2026-09-29 11-00 B")
+    e.dir = a
+    await m.startStop()
+    await m.startStop()
+    #expect(m.recordTitle == "● Record")
+    #expect(m.finishing == "Finishing: 2026-09-29 10-00 A…")
+    e.dir = b
+    await m.startStop()
+    #expect(m.isRecording)
+    #expect(m.finishing == "Finishing: 2026-09-29 10-00 A…")
+    await m.startStop()
+    #expect(m.finishing == "Finishing 2 recordings…")
+    #expect(await eventually { log.withLock { $0 } == ["begin 2026-09-29 10-00 A"] })
+    gate.signal()
+    #expect(await eventually { m.finishing == "Finishing: 2026-09-29 11-00 B…" })
+    #expect(m.lastSessionDir == a)
+    gate.signal()
+    await m.finishPending()
+    #expect(m.finishing == nil)
+    #expect(m.lastSessionDir == b)
+    #expect(log.withLock { $0 } == [
+        "begin 2026-09-29 10-00 A", "end 2026-09-29 10-00 A", "begin 2026-09-29 11-00 B", "end 2026-09-29 11-00 B",
+    ])
+}
+
+@MainActor @Test func finalizeRunsAtUtilityPriority() async {
+    let seen = Mutex<TaskPriority?>(nil)
+    let m = RecorderModel(
+        engine: FakeEngine(), catalog: FakeCatalog(devices: [airpods]), enabledIDs: ["computer"], persist: { _ in },
+        finalize: { dir, _ in
+            seen.withLock { $0 = Task.basePriority }
+            return dir
+        })
+    m.refreshDevices()
+    await m.startStop()
+    await m.startStop()
+    await m.finishPending()
+    #expect(seen.withLock { $0 } == .utility)
+}
+
+@MainActor @Test func aFinishedFinalizeKeepsTheErrorOfAFailedStart() async {
+    let e = FakeEngine()
+    let gate = DispatchSemaphore(value: 0)
+    let m = model(e) { _ in gate.wait() }
+    await m.startStop()
+    await m.startStop()
+    e.startError = RecorderError.lowDisk(freeBytes: 5)
+    await m.startStop()
+    #expect(m.errorText?.contains("MB free") == true)
+    gate.signal()
+    await m.finishPending()
+    #expect(m.errorText?.contains("MB free") == true)
+}
+
+@MainActor @Test func aFailedFinalizeIsShownUntilTheNextRecording() async {
+    let e = FakeEngine()
+    let m = RecorderModel(
+        engine: e, catalog: FakeCatalog(devices: [airpods]), enabledIDs: ["computer"], persist: { _ in },
+        finalize: { _, _ in throw RecorderError.noSources })
+    m.refreshDevices()
+    await m.startStop()
+    await m.startStop()
+    await m.finishPending()
+    #expect(m.errorText == "finalize failed: no sources selected")
+    #expect(m.lastSessionDir == e.dir)
+    await m.startStop()
+    #expect(m.errorText == nil)
 }
 
 @MainActor @Test func recordButtonIsDisabledWhileAStartIsInProgress() async {
@@ -198,9 +292,10 @@ private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], fi
     await m.startStop()
     await m.startStop()
     #expect(e.phase == .idle)
+    await m.finishPending()
     #expect(finalized == [e.dir])
     #expect(m.lastSessionDir == e.dir)
-    #expect(!m.finalizing)
+    #expect(m.finishing == nil)
 }
 
 @MainActor @Test func sessionThatStoppedItselfIsFinalized() async {
@@ -211,8 +306,9 @@ private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], fi
     e.phase = .idle
     e.lastSessionDir = e.dir
     m.tick()
-    #expect(m.finalizing)
-    while m.finalizing { await Task.yield() }
+    #expect(m.finishing == "Finishing: fake-session…")
+    #expect(m.recordTitle == "● Record")
+    await m.finishPending()
     #expect(finalized == [e.dir])
     #expect(m.lastSessionDir == e.dir)
     m.tick()
@@ -229,9 +325,9 @@ private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], fi
     e.phase = .idle
     e.lastSessionDir = e.dir
     m.tick()
-    #expect(m.finalizing)
+    #expect(m.finishing == "Finishing: fake-session…")
     m.tick()
-    while m.finalizing { await Task.yield() }
+    await m.finishPending()
     m.tick()
     #expect(finalized == [e.dir])
     #expect(m.lastSessionDir == e.dir)
@@ -246,13 +342,24 @@ private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], fi
         returned = true
     }
     await m.startStop()
-    let stopping = Task { await m.startStop() }
-    while !m.finalizing || m.isRecording { await Task.yield() }
+    await m.startStop()
+    #expect(m.finishing == "Finishing: fake-session…")
     let quit = Task { await m.prepareToQuit(); return returned }
     try? await Task.sleep(for: .milliseconds(50))
     gate.signal()
     #expect(await quit.value)
-    await stopping.value
+    #expect(m.finishing == nil)
+}
+
+@MainActor @Test func quitRightAfterAnUnnoticedSelfStopFinalizesThatSession() async {
+    let e = FakeEngine()
+    nonisolated(unsafe) var finalized: [URL] = []
+    let m = model(e) { finalized.append($0) }
+    await m.startStop()
+    e.phase = .idle
+    e.lastSessionDir = e.dir
+    await m.prepareToQuit()
+    #expect(finalized == [e.dir])
 }
 
 @MainActor @Test func quitDuringASelfStopFinalizeWaitsForIt() async {
@@ -279,8 +386,9 @@ private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], fi
     let m = model(e) { _ in gate.wait() }
     await m.startStop()
     let quit = Task { await m.prepareToQuit() }
-    while !m.finalizing || m.isRecording { await Task.yield() }
+    while m.isRecording { await Task.yield() }
     #expect(m.recordTitle == "Finalizing before quit…")
+    #expect(!m.canStartStop)
     gate.signal()
     await quit.value
 }
@@ -290,15 +398,14 @@ private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], fi
     let gate = DispatchSemaphore(value: 0)
     let m = model(e) { _ in gate.wait() }
     await m.startStop()
-    let stopping = Task { await m.startStop() }
-    while !m.finalizing || m.isRecording { await Task.yield() }
-    #expect(m.recordTitle == "Finalizing…")
+    await m.startStop()
+    #expect(m.recordTitle == "● Record")
     let quit = Task { await m.prepareToQuit() }
     try? await Task.sleep(for: .milliseconds(20))
     #expect(m.recordTitle == "Finalizing before quit…")
+    #expect(!m.canStartStop)
     gate.signal()
     await quit.value
-    await stopping.value
 }
 
 @MainActor @Test func stopErrorClearsOnceSeenAfterTheFinalize() async {
@@ -314,7 +421,7 @@ private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], fi
     m.menuClosed()
     #expect(m.warning == "stopped: disk almost full (5 MB free)")
     gate.signal()
-    while m.finalizing { await Task.yield() }
+    await m.finishPending()
     m.tick()
     #expect(m.warning == "stopped: disk almost full (5 MB free)")
     m.menuClosed()
@@ -331,7 +438,7 @@ private func model(_ engine: FakeEngine, enabled: Set<String> = ["computer"], fi
     e.lastSessionDir = e.dir
     e.lastError = "disk almost full (5 MB free)"
     m.tick()
-    while m.finalizing { await Task.yield() }
+    await m.finishPending()
     m.menuClosed()
     #expect(m.warning == nil)
     await m.startStop()
@@ -659,6 +766,7 @@ private final class FakeCalendar: CalendarSource, @unchecked Sendable {
     #expect(e.manifest.title == "Планёрка: итоги")
     await m.startStop()
     #expect(m.title == "")
+    await m.finishPending()
     #expect(m.lastSessionDir == renamed)
 }
 
@@ -686,6 +794,7 @@ private final class FakeCalendar: CalendarSource, @unchecked Sendable {
     #expect(saved == ["/tmp/out-b"])
     await m.startStop()
     await m.startStop()
+    await m.finishPending()
     #expect(outputs == ["/tmp/out-b"])
 }
 
@@ -703,6 +812,7 @@ private final class FakeCalendar: CalendarSource, @unchecked Sendable {
     m.refreshDevices()
     await m.startStop()
     await m.startStop()
+    await m.finishPending()
     #expect(m.lastSessionDir == local)
     #expect(m.errorText == nil)
     #expect(m.warning == "Saved in the local folder: folder not found: /tmp/out")
@@ -711,6 +821,7 @@ private final class FakeCalendar: CalendarSource, @unchecked Sendable {
     fail.store(false, ordering: .relaxed)
     await m.startStop()
     await m.startStop()
+    await m.finishPending()
     #expect(m.lastSessionDir == moved)
     #expect(m.warning == nil)
 }
@@ -801,6 +912,7 @@ private func slidesModel(
     let (m, _) = slidesModel(e, on: true)
     await m.startStop()
     await m.startStop()
+    await m.finishPending()
     #expect(m.warning == "Slides video failed: no frames; Could not read: mic - A.seg001.caf")
     m.menuClosed()
     #expect(m.warning == nil)
@@ -937,12 +1049,12 @@ private func slowStopModel(_ engine: SlowStopEngine, finalized: Count) -> Record
     }
     try? await Task.sleep(for: .milliseconds(200))
     #expect(!quitDone.withLock { $0 })
-    #expect(m.finalizing)
+    #expect(m.stopping)
     e.gate.signal()
     await quit.value
     await stopping.value
     #expect(finalized.value == 1)
-    #expect(!m.finalizing)
+    #expect(m.finishing == nil)
 }
 
 @MainActor @Test func aSecondStopDuringAStopFinalizesOnce() async {
@@ -954,13 +1066,14 @@ private func slowStopModel(_ engine: SlowStopEngine, finalized: Count) -> Record
     while e.phase != .stopping { await Task.yield() }
     let second = Task { await m.startStop() }
     try? await Task.sleep(for: .milliseconds(50))
-    #expect(m.finalizing)
-    #expect(m.recordTitle == "Finalizing…")
+    #expect(m.stopping)
+    #expect(m.recordTitle == "Stopping…")
     e.gate.signal()
     while e.phase != .idle { await Task.yield() }
     m.tick()
     await first.value
     await second.value
+    await m.finishPending()
     #expect(finalized.value == 1)
-    #expect(!m.finalizing)
+    #expect(m.finishing == nil)
 }
