@@ -111,10 +111,14 @@ it again.
    and the system default microphone are switched on. Switch sources on or off with their checkboxes (not possible
    while recording). A device that is enabled but absent is shown as "(not connected)".
 2. Press **● Record**. The menu bar icon changes to a record symbol and a timer runs. Each source shows a level bar.
-3. Press **■ Stop**. The button shows "Finalizing…" while Dabber encodes the files, then the recording is moved to the
-   output folder. **Show last recording** opens it in Finder.
+3. Press **■ Stop**. The button shows "Stopping…" for a second or two, then "● Record" again: the next recording can
+   start right away. Dabber encodes the files in the background and then moves the recording to the output folder.
+   Meanwhile the menu shows "Finishing: <folder name>…" under the button, or "Finishing N recordings…" when several
+   are waiting. They are finished one at a time, in the order they were stopped. **Show last recording** opens the
+   one finished last in Finder.
 
-If you quit Dabber during a recording, it finishes the recording first ("Finalizing before quit…").
+If you quit Dabber during a recording or while recordings are still finishing, it finishes all of them first
+("Finalizing before quit…").
 
 Each recording is a folder named `YYYY-MM-DD HH-MM <name>` (only the date and time if there is no name). If a folder
 with that name already exists, a number is added. Inside:
@@ -243,9 +247,11 @@ Your recordings in the output folder are not touched.
 - **Warning "Could not read: …".** A piece of a track was damaged, usually by a power loss or a crash. Dabber
   finished the recording without that piece (silence in its place) and left the damaged `.caf` file in the recording
   folder.
-- **"Finalizing…" takes a long time.** After Stop Dabber encodes every track and the mix. This takes longer for long
-  recordings and more sources, and longer again if the output folder is on another disk. Let it finish; if you quit,
-  Dabber waits for it. If Dabber was closed unexpectedly, unfinished recordings are finished at the next launch.
+- **"Finishing…" takes a long time.** After Stop Dabber encodes every track and the mix in the background, at low
+  priority so that a new recording is not disturbed. This takes longer for long recordings and more sources, longer
+  again if the output folder is on another disk, and longer while other apps keep the processor busy. You can record
+  meanwhile; if you quit, Dabber waits for it. If Dabber was closed unexpectedly, unfinished recordings are finished
+  at the next launch.
 
 ## For developers
 
