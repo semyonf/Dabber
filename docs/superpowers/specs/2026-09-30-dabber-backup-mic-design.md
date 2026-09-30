@@ -24,9 +24,10 @@ another microphone until it comes back.
 | Session without a loss | No backup track: the backup joins `session.json` and the recording only at its first use. A backup that joined but never recorded a segment (for example every start failed) is removed from `session.json` at stop, so no silent full-length track appears |
 | Already recorded | A backup that is also a recorded source (same UID) is ignored for that session, including the fallback to the default microphone at Record |
 | Not connected when needed | Not started; the menu says "Backup mic &lt;name&gt; not connected". The presence check runs on the backup queue, at most every 2 s (`BackupPolicy.retrySeconds`), and the backup starts once it appears while still needed |
-| Start failed | Reported as "Backup mic &lt;name&gt; failed (…)". While the backup is needed, a start that failed (or a source that failed later) is retried on the backup queue at most every 2 s. A backup that never started is never reported as recording |
+| Start failed | Reported as "Backup mic &lt;name&gt; failed (…)". While the backup is needed, a start that failed (or a source that failed later) is retried on the backup queue at most every 2 s. A backup that never started is never reported as recording. After a failure, a restarting backup is reported with that failure, not as recording, until it runs again |
 | Sleep | Sleep pauses every source; wake resumes the backup only if it is in use. The backup's pause and resume go through the backup queue, after any queued start, and no new backup work is queued while asleep |
-| Warnings | "&lt;mic&gt;: waiting for device — recording &lt;backup&gt; (backup)" (and the same after "failed (…)"); "Backup mic &lt;name&gt; not connected"; "Backup mic &lt;name&gt; failed (…)"; "&lt;backup&gt;: no signal for 10 s" as for any running microphone |
+| Warnings | "&lt;mic&gt;: waiting for device — recording &lt;backup&gt; (backup)" (and the same after "failed (…)"); "Backup mic &lt;name&gt; not connected"; "Backup mic &lt;name&gt; failed (…)"; "&lt;backup&gt;: no signal for 10 s" as for any running microphone; "Recording &lt;backup&gt; (backup)" when the backup records and no lost-microphone warning names it (for example while the microphones settle) |
+| Absent at Record | "&lt;mic&gt; not connected" stays until the microphone runs or restarts; a microphone stopped by sleep still counts as absent |
 | Start | Unchanged: if no enabled microphone is connected at Record, the system default microphone is recorded, as before |
 
 ## Behaviour
@@ -40,7 +41,9 @@ another microphone until it comes back.
   private serial backup queue, not on the caller's thread, so the menu does not wait for CoreAudio: the presence
   check, creating the source, saving the manifest, and the device calls (`start`, `pause`, `resume`). The source is
   appended to `sources` and to the manifest together, under the lock, so its index for `segmentsChanged` is stable.
-  While an operation is queued, the backup is reported as recording; once it is done, the source status decides.
+  While an operation is queued, the backup is reported as recording; once it is done, the source status decides. A
+  resume on this queue (also after wake) waits until the source has handled it, so a poll never sees the source still
+  stopped with nothing queued.
   `stop()` first moves the phase to stopping (no new decisions after that), then drains this queue, then stops every
   source, so a backup that was just started is stopped too.
 - A resume continues the same track: a new segment starts later, and the finalizer places it on the session timeline
