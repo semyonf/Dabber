@@ -120,6 +120,7 @@ public class CaptureSource: @unchecked Sendable {
                 stopSystemWatcher?()
                 stopSystemWatcher = nil
                 wanted = false
+                setStatus(.failed("\(error)"))
                 throw error
             }
         }
@@ -142,13 +143,13 @@ public class CaptureSource: @unchecked Sendable {
         }
     }
 
-    public func resume() {
+    public func resume(reason: String = "wake") {
         queue.async { [self] in
             paused = false
             guard wanted, stopIO == nil else { return }
             guard deviceIsPresent() else { return setStatus(.waitingForDevice) }
             attempts = 0
-            restartLocked(reason: "wake")
+            restartLocked(reason: reason)
         }
     }
 

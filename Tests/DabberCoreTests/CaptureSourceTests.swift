@@ -191,3 +191,12 @@ func formatChangeReopensAfterAShortDelay(object: AudioObjectID, selector: AudioO
     #expect(probe.starts == 1)
     #expect(!probe.running)
 }
+
+@Test func aStartErrorLeavesTheSourceFailed() throws {
+    let probe = Probe()
+    let source = try makeSource(probe)
+    source.streamlessOpens.store(1, ordering: .relaxed)
+    #expect(throws: SourceError.self) { try source.start() }
+    #expect(source.status == .failed("device fake has no input stream"))
+    #expect(!probe.running)
+}
