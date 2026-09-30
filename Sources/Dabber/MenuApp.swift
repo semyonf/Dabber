@@ -53,9 +53,15 @@ struct LevelBar: View {
     var warn = false
 
     var body: some View {
-        ProgressView(value: max(0, min(1, (db + 60) / 60)))
-            .tint(warn ? .orange : .accentColor)
-            .frame(width: 70)
+        Capsule()
+            .fill(.quaternary)
+            .overlay(alignment: .leading) {
+                Capsule()
+                    .fill(warn ? Color.orange : Color.accentColor)
+                    .frame(width: 70 * max(0, min(1, (db + 60) / 60)))
+            }
+            .frame(width: 70, height: 6)
+            .transaction { $0.animation = nil }
     }
 }
 

@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Self.model.refreshDevices()
             Self.feed.refresh()
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             Task { @MainActor in
                 Self.model.tick()
                 Self.feed.tick()
