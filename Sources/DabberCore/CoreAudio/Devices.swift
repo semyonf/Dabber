@@ -4,6 +4,7 @@ public struct InputDevice: Sendable, Equatable {
     public let id: AudioObjectID
     public let uid: String
     public let name: String
+    public var builtIn = false
 }
 
 public let systemObject = AudioObjectID(kAudioObjectSystemObject)
@@ -25,10 +26,12 @@ func describeInputDevice(_ id: AudioObjectID) throws -> InputDevice? {
     let streams = try getArray(
         id, address(kAudioDevicePropertyStreams, scope: kAudioObjectPropertyScopeInput), filler: AudioObjectID(0))
     guard !streams.isEmpty else { return nil }
+    let transport = try? getValue(id, address(kAudioDevicePropertyTransportType), default: UInt32(0))
     return InputDevice(
         id: id,
         uid: try getString(id, address(kAudioDevicePropertyDeviceUID)),
-        name: try getString(id, address(kAudioObjectPropertyName)))
+        name: try getString(id, address(kAudioObjectPropertyName)),
+        builtIn: transport == kAudioDeviceTransportTypeBuiltIn)
 }
 
 public func processObject(pid: pid_t) throws -> AudioObjectID {

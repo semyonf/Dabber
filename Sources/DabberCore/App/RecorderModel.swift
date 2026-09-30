@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 public protocol RecordingEngine: Sendable {
-    func start(specs: [SourceSpec], title: String, slides: Bool) throws -> URL
+    func start(specs: [SourceSpec], backup: SourceSpec?, title: String, slides: Bool) throws -> URL
     func setTitle(_ title: String)
     func stop() -> URL?
     func status(at now: Date) -> RecorderStatus
@@ -14,8 +14,8 @@ public protocol RecordingEngine: Sendable {
 }
 
 extension SessionRecorder: RecordingEngine {
-    public func start(specs: [SourceSpec], title: String, slides: Bool) throws -> URL {
-        try start(specs: specs, title: title, slides: slides, at: Date())
+    public func start(specs: [SourceSpec], backup: SourceSpec?, title: String, slides: Bool) throws -> URL {
+        try start(specs: specs, backup: backup, title: title, slides: slides, at: Date())
     }
 }
 
@@ -50,6 +50,11 @@ public final class RecorderModel {
         public var showsLevel: Bool { enabled || status != nil }
     }
 
+    public struct BackupChoice: Identifiable, Equatable, Sendable {
+        public let id: String
+        public let title: String
+    }
+
     public struct MarkRow: Identifiable, Equatable, Sendable {
         public let id: Int
         public let time: String
@@ -60,6 +65,11 @@ public final class RecorderModel {
 
     nonisolated public static func defaultEnabledIDs(defaultInputUID: String?) -> Set<String> {
         Set([computerID] + (defaultInputUID.map { [$0] } ?? []))
+    }
+
+    nonisolated public static func backupSetting(saved: String?, devices: [InputDevice]) -> String? {
+        guard let saved else { return devices.first(where: \.builtIn)?.uid }
+        return saved.isEmpty ? nil : saved
     }
 
     public private(set) var rows: [Row] = []
@@ -75,6 +85,7 @@ public final class RecorderModel {
     public private(set) var outputFolder: URL
     public private(set) var slidesOn: Bool
     public private(set) var hotkeyAllowed: Bool?
+    public private(set) var backupUID: String?
 
     private let engine: any RecordingEngine
     private let catalog: any DeviceCatalog
@@ -87,12 +98,14 @@ public final class RecorderModel {
     private let slides: SlideRecorder?
     private let persistSlides: @Sendable (Bool) -> Void
     private let hotkey: (any MarkHotkey)?
+    private let persistBackup: @Sendable (String?) -> Void
     private var enabledIDs: Set<String>
     private var names: [String: String]
     private enum StartNote { case noneSelected(String), missing(String?), unavailable }
     private var startNote: StartNote?
     private var absentAtStart: Set<String> = []
     private var sessionMics: [SourceSpec] = []
+    private var sessionBackup: SourceSpec?
     private var starting = false
     private var finalizedDir: URL?
     private var finalizeTask: Task<Void, Never>?
@@ -116,7 +129,9 @@ public final class RecorderModel {
         slides: SlideRecorder? = nil,
         slidesOn: Bool = false,
         persistSlides: @escaping @Sendable (Bool) -> Void = { _ in },
-        hotkey: (any MarkHotkey)? = nil
+        hotkey: (any MarkHotkey)? = nil,
+        backupUID: String? = nil,
+        persistBackup: @escaping @Sendable (String?) -> Void = { _ in }
     ) {
         self.engine = engine
         self.catalog = catalog
@@ -133,6 +148,8 @@ public final class RecorderModel {
         self.slidesOn = slidesOn
         self.persistSlides = persistSlides
         self.hotkey = hotkey
+        self.backupUID = backupUID
+        self.persistBackup = persistBackup
         lastSessionDir = engine.lastSessionDir
     }
 
@@ -199,6 +216,21 @@ public final class RecorderModel {
         persistSlides(slidesOn)
     }
 
+    public var backupChoices: [BackupChoice] {
+        var choices = rows.filter { $0.id != Self.computerID }.map { BackupChoice(id: $0.id, title: $0.title) }
+        if let uid = backupUID, !choices.contains(where: { $0.id == uid }) {
+            choices.append(BackupChoice(id: uid, title: "\(names[uid] ?? uid) (not connected)"))
+        }
+        return choices
+    }
+
+    public func setBackup(_ uid: String?) {
+        guard !isRecording else { return }
+        backupUID = uid
+        persistBackup(uid)
+        rememberNames()
+    }
+
     public func deliveryDone(failure: String?) {
         deliveryNote = failure
         tick()
@@ -233,8 +265,9 @@ public final class RecorderModel {
     }
 
     private func rememberNames() {
-        var next = names.filter { enabledIDs.contains($0.key) }
-        for row in rows where row.connected && row.id != Self.computerID && enabledIDs.contains(row.id) {
+        let kept = enabledIDs.union(backupUID.map { [$0] } ?? [])
+        var next = names.filter { kept.contains($0.key) }
+        for row in rows where row.connected && row.id != Self.computerID && kept.contains(row.id) {
             next[row.id] = row.name
         }
         guard next != names else { return }
@@ -314,6 +347,7 @@ public final class RecorderModel {
         phase = status.phase
         elapsed = Self.format(seconds: status.phase == .idle ? 0 : status.elapsedSeconds)
         var notes: [String] = []
+        let backupNote = status.backup == .recording ? sessionBackup.map { " — recording \($0.name) (backup)" } ?? "" : ""
         var next = rows
         for i in next.indices {
             let snapshot = status.sources.first { next[i].id == ($0.spec.kind == .computer ? Self.computerID : $0.spec.uid) }
@@ -323,11 +357,19 @@ public final class RecorderModel {
             guard let snapshot else { continue }
             if snapshot.status == .waitingForDevice, absentAtStart.contains(next[i].id) { continue }
             if next[i].silent { notes.append("\(next[i].label): no signal for 10 s") }
+            if let sessionBackup, snapshot.spec.uid == sessionBackup.uid { continue }
             switch snapshot.status {
             case .restarting(let reason): notes.append("\(next[i].label): restarting (\(reason))")
-            case .waitingForDevice: notes.append("\(next[i].label): waiting for device")
-            case .failed(let why): notes.append("\(next[i].label): failed (\(why))")
+            case .waitingForDevice: notes.append("\(next[i].label): waiting for device" + backupNote)
+            case .failed(let why): notes.append("\(next[i].label): failed (\(why))" + backupNote)
             case .running, .stopped: break
+            }
+        }
+        if let name = sessionBackup?.name {
+            switch status.backup {
+            case .missing: notes.append("Backup mic \(name) not connected")
+            case .failed(let why): notes.append("Backup mic \(name) failed (\(why))")
+            case .off, .recording: break
             }
         }
         if next != rows { rows = next }
@@ -343,6 +385,7 @@ public final class RecorderModel {
             draft = ""
         }
         if status.phase == .idle, !title.isEmpty { title = "" }
+        if status.phase == .idle { sessionBackup = nil }
         if status.phase == .idle, !sessionMics.isEmpty {
             sessionMics = []
             refreshDevices()
@@ -435,6 +478,11 @@ public final class RecorderModel {
         } else {
             startNote = .unavailable
         }
+        let recorded = Set(specs.compactMap(\.uid))
+        let backup = backupUID.flatMap { uid in
+            recorded.contains(uid)
+                ? nil : SourceSpec(kind: .mic, uid: uid, name: rows.first { $0.id == uid }?.name ?? names[uid] ?? uid)
+        }
         let engine = self.engine
         let startSpecs = specs
         let recordSlides = slidesOn && slides != nil
@@ -443,11 +491,12 @@ public final class RecorderModel {
         let events = await calendar.events(from: now, to: now.addingTimeInterval(CalendarEvent.lookahead))
         let title = CalendarEvent.pickTitle(events, at: now)
         do {
-            _ = try await Task.detached { try engine.start(specs: startSpecs, title: title, slides: recordSlides) }.value
+            _ = try await Task.detached { try engine.start(specs: startSpecs, backup: backup, title: title, slides: recordSlides) }.value
             if recordSlides { slides?.start { try engine.addFrame(atNanos: $0, data: $1) } }
             hotkeyAllowed = hotkey?.start { [weak self] in Task { @MainActor in self?.mark() } }
             self.title = title
             sessionMics = startSpecs.filter { $0.kind == .mic }
+            sessionBackup = backup
             stopErrorSeen = false
             finalizedDir = nil
             errorText = nil

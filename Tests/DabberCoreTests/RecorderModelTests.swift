@@ -6,6 +6,8 @@ import Testing
 
 private final class FakeEngine: RecordingEngine, @unchecked Sendable {
     var started: [[SourceSpec]] = []
+    var backups: [SourceSpec?] = []
+    var backupState: BackupState = .off
     var slides: [Bool] = []
     let frames = Mutex<[UInt64]>([])
     var phase: RecorderPhase = .idle
@@ -18,13 +20,14 @@ private final class FakeEngine: RecordingEngine, @unchecked Sendable {
     var startGate: DispatchSemaphore?
     let startEntered = Atomic<Bool>(false)
 
-    func start(specs: [SourceSpec], title: String, slides: Bool) throws -> URL {
+    func start(specs: [SourceSpec], backup: SourceSpec?, title: String, slides: Bool) throws -> URL {
         startEntered.store(true, ordering: .relaxed)
         startGate?.wait()
         if let startError { throw startError }
         if phase != .idle { throw RecorderError.busy }
         lastError = nil
         started.append(specs)
+        backups.append(backup)
         self.slides.append(slides)
         manifest.title = title
         phase = .recording
@@ -59,7 +62,7 @@ private final class FakeEngine: RecordingEngine, @unchecked Sendable {
 
     func status(at now: Date) -> RecorderStatus {
         RecorderStatus(phase: phase, elapsedSeconds: 61, sources: snapshots, sessionDir: phase == .recording ? dir : nil, lastError: lastError,
-            diskWarning: diskWarning)
+            diskWarning: diskWarning, backup: backupState)
     }
 }
 
@@ -1004,7 +1007,7 @@ private final class SlowStopEngine: RecordingEngine, @unchecked Sendable {
     let dir = URL(fileURLWithPath: "/tmp/slow-stop")
     var phase: RecorderPhase { lock.withLock { phaseValue } }
 
-    func start(specs: [SourceSpec], title: String, slides: Bool) throws -> URL {
+    func start(specs: [SourceSpec], backup: SourceSpec?, title: String, slides: Bool) throws -> URL {
         lock.withLock { phaseValue = .recording }
         return dir
     }
@@ -1094,4 +1097,121 @@ private func slowStopModel(_ engine: SlowStopEngine, finalized: Count) -> Record
     await m.finishPending()
     #expect(finalized.value == 1)
     #expect(m.finishing == nil)
+}
+
+private let builtInMic = InputDevice(id: 3, uid: "bi", name: "MacBook Air Microphone", builtIn: true)
+
+private final class Saved<T>: @unchecked Sendable {
+    var values: [T] = []
+}
+
+@MainActor
+private func backupModel(
+    _ engine: FakeEngine, enabled: Set<String> = ["computer", "ap"], backup: String? = "bi",
+    devices: [InputDevice] = [airpods, usb, builtInMic], defaultUID: String? = nil, names: [String: String] = [:],
+    savedBackup: Saved<String?> = Saved(), savedNames: Saved<[String: String]> = Saved()
+) -> RecorderModel {
+    let m = RecorderModel(
+        engine: engine, catalog: FakeCatalog(devices: devices, defaultUID: defaultUID), enabledIDs: enabled,
+        names: names, persist: { _ in }, persistNames: { savedNames.values.append($0) },
+        finalize: { dir, _ in dir }, backupUID: backup, persistBackup: { savedBackup.values.append($0) })
+    m.refreshDevices()
+    return m
+}
+
+@Test func firstLaunchPicksTheBuiltInMicAsBackup() {
+    #expect(RecorderModel.backupSetting(saved: nil, devices: [airpods, builtInMic]) == "bi")
+    #expect(RecorderModel.backupSetting(saved: nil, devices: [airpods, usb]) == nil)
+    #expect(RecorderModel.backupSetting(saved: "", devices: [builtInMic]) == nil)
+    #expect(RecorderModel.backupSetting(saved: "usb", devices: [builtInMic]) == "usb")
+}
+
+@MainActor @Test func backupChoiceIsSavedAndLockedWhileRecording() async {
+    let e = FakeEngine()
+    let saved = Saved<String?>()
+    let dabberMic = InputDevice(id: 9, uid: FeedDevices.micUID, name: "Dabber Mic")
+    let m = backupModel(e, devices: [airpods, usb, builtInMic, dabberMic], savedBackup: saved)
+    #expect(m.backupUID == "bi")
+    #expect(m.backupChoices.map(\.id) == ["ap", "usb", "bi"])
+    #expect(m.backupChoices.map(\.title) == ["AirPods", "USB", "MacBook Air Microphone"])
+    m.setBackup("usb")
+    #expect(m.backupUID == "usb")
+    #expect(saved.values == ["usb"])
+    await m.startStop()
+    m.setBackup(nil)
+    #expect(m.backupUID == "usb")
+    #expect(saved.values == ["usb"])
+    await m.startStop()
+    m.setBackup(nil)
+    #expect(m.backupUID == nil)
+    #expect(saved.values == ["usb", nil])
+}
+
+@MainActor @Test func anAbsentBackupIsListedUnderItsSavedName() {
+    let m = backupModel(FakeEngine(), devices: [airpods, usb], names: ["bi": "MacBook Air Microphone"])
+    #expect(m.backupChoices.last == RecorderModel.BackupChoice(id: "bi", title: "MacBook Air Microphone (not connected)"))
+}
+
+@MainActor @Test func theBackupNameIsSavedWithTheSourceNames() {
+    let names = Saved<[String: String]>()
+    let m = backupModel(FakeEngine(), savedNames: names)
+    #expect(names.values.last == ["ap": "AirPods", "bi": "MacBook Air Microphone"])
+    m.setBackup("usb")
+    #expect(names.values.last == ["ap": "AirPods", "usb": "USB"])
+}
+
+@MainActor @Test func recordingPassesTheBackupUnlessItIsAlreadyRecorded() async {
+    let e = FakeEngine()
+    let m = backupModel(e)
+    await m.startStop()
+    await m.startStop()
+    m.toggle("bi")
+    await m.startStop()
+    #expect(e.backups == [SourceSpec(kind: .mic, uid: "bi", name: "MacBook Air Microphone"), nil])
+}
+
+@MainActor @Test func theFallbackMicIsNotAlsoTheBackup() async {
+    let e = FakeEngine()
+    let m = backupModel(e, enabled: ["computer"], defaultUID: "bi")
+    await m.startStop()
+    #expect(e.started.last?.last == SourceSpec(kind: .mic, uid: "bi", name: "MacBook Air Microphone"))
+    #expect(e.backups == [nil])
+}
+
+@MainActor @Test func backupWarningsNameTheLostMicAndTheBackup() async {
+    let e = FakeEngine()
+    let m = backupModel(e)
+    await m.startStop()
+    let ap = SourceSpec(kind: .mic, uid: "ap", name: "AirPods")
+    let bi = SourceSpec(kind: .mic, uid: "bi", name: "MacBook Air Microphone")
+    e.backupState = .recording
+    e.snapshots = [
+        SourceSnapshot(spec: ap, status: .waitingForDevice, levelDb: -160, silent: false),
+        SourceSnapshot(spec: bi, status: .running, levelDb: -20, silent: false),
+    ]
+    m.tick()
+    #expect(m.warning == "AirPods: waiting for device — recording MacBook Air Microphone (backup)")
+    #expect(m.rows.first { $0.id == "bi" }?.showsLevel == true)
+    e.snapshots[0] = SourceSnapshot(spec: ap, status: .failed("x"), levelDb: -160, silent: false)
+    e.snapshots[1] = SourceSnapshot(spec: bi, status: .running, levelDb: -70, silent: true)
+    m.tick()
+    #expect(m.warning == "AirPods: failed (x) — recording MacBook Air Microphone (backup); MacBook Air Microphone: no signal for 10 s")
+    e.backupState = .missing
+    e.snapshots = [SourceSnapshot(spec: ap, status: .waitingForDevice, levelDb: -160, silent: false)]
+    m.tick()
+    #expect(m.warning == "AirPods: waiting for device; Backup mic MacBook Air Microphone not connected")
+    e.snapshots.append(SourceSnapshot(spec: bi, status: .waitingForDevice, levelDb: -160, silent: false))
+    m.tick()
+    #expect(m.warning == "AirPods: waiting for device; Backup mic MacBook Air Microphone not connected")
+    e.backupState = .failed("boom")
+    e.snapshots[1] = SourceSnapshot(spec: bi, status: .failed("boom"), levelDb: -160, silent: false)
+    m.tick()
+    #expect(m.warning == "AirPods: waiting for device; Backup mic MacBook Air Microphone failed (boom)")
+    e.backupState = .off
+    e.snapshots = [
+        SourceSnapshot(spec: ap, status: .running, levelDb: -20, silent: false),
+        SourceSnapshot(spec: bi, status: .stopped, levelDb: -160, silent: false),
+    ]
+    m.tick()
+    #expect(m.warning == nil)
 }
