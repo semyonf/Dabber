@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let outputKey = "outputFolder"
     private static let legacyKey = "legacySessionsAdopted"
     private static let slidesKey = "recordSlides"
+    private static let backupKey = "backupMic"
 
     @MainActor static let model = RecorderModel(
         engine: SessionRecorder(root: AppPaths.workRoot, appVersion: AppPaths.version),
@@ -24,7 +25,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         slides: SlideRecorder(grabber: LiveScreenGrabber()),
         slidesOn: UserDefaults.standard.bool(forKey: slidesKey),
         persistSlides: { UserDefaults.standard.set($0, forKey: slidesKey) },
-        hotkey: LiveMarkHotkey())
+        hotkey: LiveMarkHotkey(),
+        backupUID: RecorderModel.backupSetting(
+            saved: UserDefaults.standard.string(forKey: backupKey), devices: (try? inputDevices()) ?? []),
+        persistBackup: { UserDefaults.standard.set($0 ?? "", forKey: backupKey) })
 
     private static let feedKey = "virtualMic"
 

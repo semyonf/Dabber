@@ -82,6 +82,11 @@ struct RecordingSection: View {
                     if row.showsLevel { LevelBar(db: row.levelDb, warn: row.silent) }
                 }
             }
+            Picker("Backup mic:", selection: Binding(get: { model.backupUID ?? "" }, set: { model.setBackup($0.isEmpty ? nil : $0) })) {
+                Text("None").tag("")
+                ForEach(model.backupChoices) { choice in Text(choice.title).tag(choice.id) }
+            }
+            .disabled(model.isRecording)
             Toggle("Record slides", isOn: Binding(get: { model.slidesOn }, set: { _ in model.toggleSlides() }))
                 .disabled(model.isRecording)
             if model.isRecording {
