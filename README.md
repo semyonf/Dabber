@@ -145,16 +145,20 @@ enabled microphones are connected and others are not, it records the connected o
 
 **Backup mic:** under the sources chooses a microphone that takes over while a recorded microphone is lost, or None.
 On first launch it is the Mac's built-in microphone (None if the Mac has none). It cannot be changed while recording.
+Microphones you record are marked "(recorded)" in this list: a recorded microphone does not serve as the backup.
 
 When a recorded microphone disappears during a recording (for example AirPods run out of battery) or fails, Dabber
 starts recording the backup microphone into its own track `mic - <name> (backup).m4a`. The menu says so, for example
-"AirPods: waiting for device — recording MacBook Air Microphone (backup)". When every recorded microphone works
-again, the backup pauses; if a microphone is lost again, the backup continues in the same track. The pauses are
-silence in that track. The backup track is also part of the mix. Losing Mac audio does not start the backup.
+"AirPods: waiting for device — recording MacBook Air Microphone (backup)". When every recorded microphone has worked
+again for a few seconds, the backup pauses; if a microphone is lost again, the backup continues in the same track. The
+pauses are silence in that track. The backup track is also part of the mix, at the level of the microphone it
+replaces, so the mix does not get quieter. Losing Mac audio does not start the backup.
 
-A recording that never lost a microphone has no backup track. If the backup microphone is itself one of the recorded
-microphones, it is not used as a backup in that recording. If it is needed but not connected, the menu says "Backup
-mic <name> not connected", and Dabber starts it as soon as it appears.
+A microphone that was not connected when you pressed Record starts the backup only if it connects, records and is
+lost again. A recording in which the backup never recorded has no backup track. If the backup microphone is itself
+one of the recorded microphones, it is not used as a backup in that recording. If the backup cannot start, the menu
+says "Backup mic <name> failed (…)" and Dabber tries again every few seconds. If it is needed but not connected, the
+menu says "Backup mic <name> not connected", and Dabber starts it as soon as it appears.
 
 ### Marks
 
@@ -256,9 +260,10 @@ Your recordings in the output folder are not touched.
   10 seconds while the Mac was playing sound: check that the right microphone is enabled, not muted, and that Dabber
   is allowed in Privacy & Security > Microphone.
 - **Warning "… waiting for device — recording … (backup)" or "Backup mic … not connected".** A recorded microphone
-  was lost. The first means the backup microphone records in its place; the second means the backup microphone is
-  absent too, so nothing records your voice until one of them comes back. Choose a microphone that is always there
-  (usually the built-in one) under **Backup mic:**.
+  was lost. The first means the backup microphone records in its place. The second means the backup microphone is
+  absent too: whatever only the lost microphone picked up is not recorded until one of them comes back, while the
+  other recorded microphones keep recording. Choose a microphone that is always there (usually the built-in one)
+  under **Backup mic:**.
 - **Music or call audio sounds worse in AirPods while recording.** When any app uses the AirPods microphone, AirPods
   switch to a Bluetooth call mode with lower playback quality. This is how Bluetooth headsets work, not a Dabber
   setting. Use another microphone (for example the Mac's built-in one) if playback quality matters.
