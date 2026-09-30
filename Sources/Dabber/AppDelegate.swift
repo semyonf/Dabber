@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         persist: { UserDefaults.standard.set($0.encoded(), forKey: feedKey) })
 
     private var timer: Timer?
+    @MainActor private static var ticks = 0
     private var devices: PropertyWatcher?
     private var appObservers: [NSObjectProtocol] = []
 
@@ -72,6 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             Task { @MainActor in
+                Self.ticks += 1
+                guard Self.model.menuOpen || Self.ticks % 4 == 0 else { return }
                 Self.model.tick()
                 Self.feed.tick()
             }

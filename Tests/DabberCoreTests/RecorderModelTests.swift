@@ -1270,3 +1270,12 @@ private func absentAirPodsModel(_ e: FakeEngine) async -> RecorderModel {
     m.tick()
     #expect(m.warning == "AirPods not connected; Recording MacBook Air Microphone (backup)")
 }
+
+@MainActor @Test func menuOpenFollowsTheMenu() {
+    let m = model(FakeEngine())
+    #expect(!m.menuOpen)
+    m.menuOpened()
+    #expect(m.menuOpen)
+    m.menuClosed()
+    #expect(!m.menuOpen)
+}

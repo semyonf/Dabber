@@ -36,6 +36,7 @@ struct MenuContent: View {
         }
         .padding(12)
         .frame(width: 300)
+        .onAppear { model.menuOpened() }
         .onDisappear { model.menuClosed() }
     }
 }

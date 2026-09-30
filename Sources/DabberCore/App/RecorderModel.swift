@@ -84,6 +84,7 @@ public final class RecorderModel {
     public private(set) var title = ""
     public private(set) var outputFolder: URL
     public private(set) var slidesOn: Bool
+    public private(set) var menuOpen = false
     public private(set) var hotkeyAllowed: Bool?
     public private(set) var backupUID: String?
 
@@ -315,7 +316,12 @@ public final class RecorderModel {
         while let finalizeTask { await finalizeTask.value }
     }
 
+    public func menuOpened() {
+        menuOpen = true
+    }
+
     public func menuClosed() {
+        menuOpen = false
         saveComment()
         guard warning != nil else { return }
         notices = []
