@@ -303,9 +303,11 @@ private func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }
 private final class DeviceFake: CaptureSource, @unchecked Sendable {
     let present = Atomic<Bool>(true)
     let failures = Atomic<Int>(0)
+    let openMillis = Atomic<Int>(0)
     let forced = Mutex<SourceStatus?>(nil)
 
     override func openDevice() throws -> OpenedDevice {
+        Thread.sleep(forTimeInterval: Double(openMillis.load(ordering: .relaxed)) / 1000)
         guard present.load(ordering: .relaxed) else { throw SourceError.deviceMissing("fake") }
         if failures.load(ordering: .relaxed) > 0 {
             failures.wrappingSubtract(1, ordering: .relaxed)
@@ -336,6 +338,7 @@ private func deviceRecorder(_ devices: Devices) throws -> SessionRecorder {
         root: root, appVersion: "t",
         makeSource: { spec, dir, base in
             let s = DeviceFake(spec: spec, dir: dir, baseName: base, channels: 1, hooks: hooks)
+            s.retryDelay = 0.3
             if base == backupDevice { s.failures.store(devices.backupFailures, ordering: .relaxed) }
             devices.made.withLock { $0[base] = s }
             return s
@@ -345,7 +348,69 @@ private func deviceRecorder(_ devices: Devices) throws -> SessionRecorder {
     return r
 }
 
+private func pausedBackup(_ r: SessionRecorder, _ devices: Devices) throws -> (DeviceFake, DeviceFake) {
+    let ap = try #require(devices["mic - AirPods"])
+    ap.force(.waitingForDevice)
+    _ = r.status(at: at(0))
+    #expect(waitUntil { devices[backupDevice]?.status == .running })
+    let b = try #require(devices[backupDevice])
+    ap.force(nil)
+    _ = r.status(at: at(1))
+    #expect(r.status(at: at(4)).backup == .off)
+    #expect(waitUntil { b.status == .stopped })
+    return (ap, b)
+}
+
+private func polls(_ r: SessionRecorder, at now: Date, for seconds: Double, until done: () -> Bool = { false })
+    -> [(BackupState, SourceStatus)] {
+    var seen: [(BackupState, SourceStatus)] = []
+    let end = Date().addingTimeInterval(seconds)
+    while Date() < end, !done() {
+        seen.append((r.status(at: now).backup, r.status(at: now).sources.last!.status))
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    return seen
+}
+
 @Suite(.serialized) struct SessionRecorderBackupDeviceTests {
+    @Test func aBackupThatFailsAfterItRanIsNotReportedAsRecordingWhileItRetries() throws {
+        let devices = Devices()
+        let r = try deviceRecorder(devices)
+        let (ap, b) = try pausedBackup(r, devices)
+        let why = "device fake has no input stream"
+        b.failures.store(3, ordering: .relaxed)
+        ap.force(.waitingForDevice)
+        _ = r.status(at: at(5))
+        #expect(waitUntil { b.status == .failed(why) })
+        #expect(r.status(at: at(5)).backup == .failed(why))
+        _ = r.status(at: at(7.5))
+        let seen = polls(r, at: at(7.5), for: 3) { b.status == .running }
+        #expect(seen.contains { $0.1 == .restarting("backup") })
+        #expect(!seen.contains { $0.0 == .recording && $0.1 != .running })
+        #expect(waitUntil { r.status(at: at(7.5)).backup == .recording })
+        #expect(b.status == .running)
+        _ = r.stop()
+    }
+
+    @Test func aResumingBackupIsNotReportedMissing() throws {
+        let devices = Devices()
+        let r = try deviceRecorder(devices)
+        let (ap, b) = try pausedBackup(r, devices)
+        b.openMillis.store(300, ordering: .relaxed)
+        ap.force(.waitingForDevice)
+        _ = r.status(at: at(5))
+        let seen = polls(r, at: at(5), for: 1)
+        #expect(!seen.contains { $0.0 == .missing })
+        #expect(b.status == .running)
+        r.willSleep()
+        #expect(waitUntil { b.status == .stopped })
+        r.didWake()
+        let woke = polls(r, at: at(5), for: 1)
+        #expect(!woke.contains { $0.0 == .missing })
+        #expect(b.status == .running)
+        _ = r.stop()
+    }
+
     @Test func theBackupPausesAndResumesThroughTheSourceAndIsMissingWhenAbsentOnResume() throws {
         let devices = Devices()
         let r = try deviceRecorder(devices)

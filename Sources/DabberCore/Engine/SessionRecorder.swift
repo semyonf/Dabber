@@ -50,6 +50,7 @@ public final class SessionRecorder: @unchecked Sendable {
         var present = true
         var nextTry = Date.distantPast
         var calmSince: Date?
+        var lastFailure: String?
     }
 
     public typealias MakeSource = @Sendable (SourceSpec, URL, String) -> CaptureSource
@@ -291,9 +292,14 @@ public final class SessionRecorder: @unchecked Sendable {
         guard wanted else { return .off }
         guard let source = backup.source else { return backup.present ? .recording : .missing }
         switch source.status {
-        case .running, .restarting: return .recording
+        case .running:
+            backup.lastFailure = nil
+            return .recording
+        case .restarting: return backup.lastFailure.map { .failed($0) } ?? .recording
         case .waitingForDevice: return .missing
-        case .failed(let why): return .failed(why)
+        case .failed(let why):
+            backup.lastFailure = why
+            return .failed(why)
         case .stopped: return backup.pending > 0 ? .recording : .missing
         }
     }
@@ -311,7 +317,7 @@ public final class SessionRecorder: @unchecked Sendable {
         else { return }
         if lock.withLock({ backup.started }) {
             switch source.status {
-            case .stopped, .failed: source.resume(reason: "backup")
+            case .stopped, .failed: resumeBackup(source, reason: "backup")
             case .running, .restarting, .waitingForDevice: break
             }
         } else if (try? source.start()) != nil {
@@ -345,9 +351,22 @@ public final class SessionRecorder: @unchecked Sendable {
     }
 
     func didWake() {
-        lock.withLock { sleeping = false }
+        lock.withLock {
+            sleeping = false
+            backup.pending += 1
+        }
         forEachSource { $0.resume() }
-        backupQueue.async { [self] in lock.withLock { backup.on && backup.started ? backup.source : nil }?.resume() }
+        backupQueue.async { [self] in
+            defer { lock.withLock { backup.pending -= 1 } }
+            if let source = lock.withLock({ backup.on && backup.started ? backup.source : nil }) {
+                resumeBackup(source, reason: "wake")
+            }
+        }
+    }
+
+    private func resumeBackup(_ source: CaptureSource, reason: String) {
+        source.resume(reason: reason)
+        source.queue.sync {}
     }
 
     private func checkDisk(at now: Date) -> Int64? {
