@@ -41,9 +41,10 @@ public struct SourceManifest: Codable, Equatable, Sendable {
     public var segments: [SegmentRecord]
     public var restarts: [RestartEvent]
     public var overruns: Int
+    public var backup: Bool?
 
     public init(kind: SourceKind, uid: String?, name: String, file: String, channels: Int,
-                segments: [SegmentRecord], restarts: [RestartEvent], overruns: Int) {
+                segments: [SegmentRecord], restarts: [RestartEvent], overruns: Int, backup: Bool? = nil) {
         self.kind = kind
         self.uid = uid
         self.name = name
@@ -52,6 +53,7 @@ public struct SourceManifest: Codable, Equatable, Sendable {
         self.segments = segments
         self.restarts = restarts
         self.overruns = overruns
+        self.backup = backup
     }
 
     public var trackBase: String { String(file.dropLast(4)) }

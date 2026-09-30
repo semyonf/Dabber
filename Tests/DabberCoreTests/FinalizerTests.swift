@@ -190,6 +190,38 @@ extension FinalizerTests {
         #expect(try rms(mix, from: 130_000, frames: 4_800) > 0.1)
     }
 
+    @Test func aBackupTrackDoesNotLowerTheMix() throws {
+        func mixRMS(backup: Bool) throws -> Float {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fin-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let s: UInt64 = 10_000_000_000
+            var m = SessionManifest(appVersion: "t", startedAt: Date(), sessionStartNanos: s)
+            m.sources = [
+                SourceManifest(kind: .computer, uid: nil, name: "Computer audio", file: "computer audio.m4a", channels: 2, segments: [
+                    SegmentRecord(file: "computer audio.seg000.caf", startNanos: s, frames: 144_000, endNanos: s + 3_000_000_000, sourceRate: 48_000, sourceChannels: 2, reason: "start"),
+                ], restarts: [], overruns: 0),
+                SourceManifest(kind: .mic, uid: "ap", name: "AirPods", file: "mic - AirPods.m4a", channels: 1, segments: [
+                    SegmentRecord(file: "mic - AirPods.seg000.caf", startNanos: s, frames: 96_000, endNanos: s + 2_000_000_000, sourceRate: 48_000, sourceChannels: 1, reason: "start"),
+                ], restarts: [], overruns: 0),
+            ]
+            if backup {
+                m.sources.append(SourceManifest(kind: .mic, uid: "bi", name: "Built-in", file: "mic - Built-in (backup).m4a", channels: 1, segments: [
+                    SegmentRecord(file: "mic - Built-in (backup).seg000.caf", startNanos: s + 2_000_000_000, frames: 48_000, endNanos: s + 3_000_000_000, sourceRate: 48_000, sourceChannels: 1, reason: "start"),
+                ], restarts: [], overruns: 0, backup: true))
+                try writeCAF(dir.appendingPathComponent("mic - Built-in (backup).seg000.caf"), samples: sine(frames: 48_000, channels: 1), channels: 1)
+            }
+            try m.save(to: dir)
+            try writeCAF(dir.appendingPathComponent("computer audio.seg000.caf"), samples: [Float](repeating: 0, count: 144_000 * 2), channels: 2)
+            try writeCAF(dir.appendingPathComponent("mic - AirPods.seg000.caf"), samples: sine(frames: 96_000, channels: 1), channels: 1)
+            try Finalizer.run(dir)
+            return try rms(dir.appendingPathComponent("mix.m4a"), from: 24_000, frames: 4_800)
+        }
+        let without = try mixRMS(backup: false)
+        let with = try mixRMS(backup: true)
+        #expect(without > 0.1)
+        #expect(abs(20 * log10(with / without)) < 0.5)
+    }
+
     @Test func sourceThatNeverConnectedBecomesASilentFullLengthTrack() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fin-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

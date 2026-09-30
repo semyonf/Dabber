@@ -95,6 +95,7 @@ private let backupBase = "mic - MacBook Air Microphone (backup)"
         #expect(m.sources[2].uid == "bi")
         #expect(m.sources[2].name == "MacBook Air Microphone")
         #expect(m.sources[2].channels == 1)
+        #expect(m.sources.map(\.backup) == [nil, nil, true])
         #expect(m.sources[1].segments.count == 1)
         #expect(r.status().sources.map(\.spec.uid) == [nil, "ap", "bi"])
         ap.set(.running)

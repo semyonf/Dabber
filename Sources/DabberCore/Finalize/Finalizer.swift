@@ -9,6 +9,7 @@ public enum Finalizer {
     private struct Track {
         let base: String
         let channels: Int
+        let backup: Bool
         let reader: TimelineReader
         let plans: [FinalizePlan]
     }
@@ -44,7 +45,7 @@ public enum Finalizer {
             }
             let placements = Timeline.place(plans.map(\.segment), sessionStartNanos: manifest.sessionStartNanos)
             tracks.append(Track(
-                base: source.trackBase, channels: source.channels,
+                base: source.trackBase, channels: source.channels, backup: source.backup == true,
                 reader: TimelineReader(placements: placements, sources: sources, channels: source.channels),
                 plans: plans))
         }
@@ -57,9 +58,10 @@ public enum Finalizer {
             let range = start..<min(start + chunkFrames, total)
             let pcms = try tracks.map { try $0.reader.read(range) }
             let contributing = zip(tracks, pcms).filter { !$0.0.reader.placements.isEmpty }
-            let mono = contributing.filter { $0.0.channels == 1 }.map(\.1)
+            let mono = contributing.filter { $0.0.channels == 1 && !$0.0.backup }.map(\.1)
             let stereo = contributing.filter { $0.0.channels != 1 }.map(\.1)
-            try encodeConcurrently(writers + [mix], pcms + [Mixer.mixToStereo(mono: mono, stereo: stereo)])
+            let backup = contributing.filter { $0.0.channels == 1 && $0.0.backup }.map(\.1)
+            try encodeConcurrently(writers + [mix], pcms + [Mixer.mixToStereo(mono: mono, stereo: stereo, backup: backup)])
             start = range.upperBound
         }
         for writer in writers { try writer.closeAndVerify() }

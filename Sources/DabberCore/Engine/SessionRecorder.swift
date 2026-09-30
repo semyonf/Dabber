@@ -268,7 +268,7 @@ public final class SessionRecorder: @unchecked Sendable {
                 sources.append(source)
                 manifest.sources.append(SourceManifest(
                     kind: spec.kind, uid: spec.uid, name: spec.name, file: base + ".m4a",
-                    channels: source.writer.channels, segments: [], restarts: [], overruns: 0))
+                    channels: source.writer.channels, segments: [], restarts: [], overruns: 0, backup: true))
                 self.manifest = manifest
                 try? manifest.save(to: dir)
                 backup = source

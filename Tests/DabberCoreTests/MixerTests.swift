@@ -14,6 +14,10 @@ import Testing
     #expect(Mixer.mixToStereo(mono: [[0.1]], stereo: [[0.2, 0.3]]) == [0.15, 0.2].map { Float($0) })
 }
 
+@Test func backupTracksAreMixedAtTheGainOfTheOthers() {
+    #expect(Mixer.mixToStereo(mono: [[0.5]], stereo: [], backup: [[0, 0.5]]) == [0.5, 0.5, 0.5, 0.5])
+}
+
 @Test func shorterInputsArePaddedWithSilence() {
     #expect(Mixer.mixToStereo(mono: [[0.5]], stereo: [[0, 0, 0.25, 0.25]]) == [0.25, 0.25, 0.125, 0.125])
 }
