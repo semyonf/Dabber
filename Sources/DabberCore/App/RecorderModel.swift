@@ -349,7 +349,10 @@ public final class RecorderModel {
         phase = status.phase
         elapsed = Self.format(seconds: status.phase == .idle ? 0 : status.elapsedSeconds)
         var notes: [String] = []
-        let connected = Set(status.sources.filter { $0.status != .waitingForDevice }.compactMap(\.spec.uid))
+        let connected = Set(status.sources.filter {
+            if case .restarting = $0.status { return true }
+            return $0.status == .running
+        }.compactMap(\.spec.uid))
         let wasAbsent = !absentAtStart.isEmpty
         absentAtStart.subtract(connected)
         if status.phase == .idle || (wasAbsent && absentAtStart.isEmpty) {
@@ -357,6 +360,7 @@ public final class RecorderModel {
             absentAtStart = []
         }
         let backupNote = status.backup == .recording ? sessionBackup.map { " — recording \($0.name) (backup)" } ?? "" : ""
+        var backupNamed = false
         var next = rows
         for i in next.indices {
             let snapshot = status.sources.first { next[i].id == ($0.spec.kind == .computer ? Self.computerID : $0.spec.uid) }
@@ -369,8 +373,12 @@ public final class RecorderModel {
             if let sessionBackup, snapshot.spec.uid == sessionBackup.uid { continue }
             switch snapshot.status {
             case .restarting(let reason): notes.append("\(next[i].label): restarting (\(reason))")
-            case .waitingForDevice: notes.append("\(next[i].label): waiting for device" + backupNote)
-            case .failed(let why): notes.append("\(next[i].label): failed (\(why))" + backupNote)
+            case .waitingForDevice:
+                notes.append("\(next[i].label): waiting for device" + backupNote)
+                backupNamed = backupNamed || !backupNote.isEmpty
+            case .failed(let why):
+                notes.append("\(next[i].label): failed (\(why))" + backupNote)
+                backupNamed = backupNamed || !backupNote.isEmpty
             case .running, .stopped: break
             }
         }
@@ -378,7 +386,8 @@ public final class RecorderModel {
             switch status.backup {
             case .missing: notes.append("Backup mic \(name) not connected")
             case .failed(let why): notes.append("Backup mic \(name) failed (\(why))")
-            case .off, .recording: break
+            case .recording: if !backupNamed { notes.append("Recording \(name) (backup)") }
+            case .off: break
             }
         }
         if next != rows { rows = next }

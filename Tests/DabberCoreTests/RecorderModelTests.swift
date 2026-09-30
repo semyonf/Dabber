@@ -1241,3 +1241,32 @@ private func backupModel(
     m.tick()
     #expect(m.warning == "USB not connected; AirPods: waiting for device — recording MacBook Air Microphone (backup)")
 }
+
+@MainActor
+private func absentAirPodsModel(_ e: FakeEngine) async -> RecorderModel {
+    let ext = InputDevice(id: 7, uid: "ext", name: "External")
+    let m = backupModel(e, enabled: ["computer", "ap", "ext"], devices: [ext, builtInMic], names: ["ap": "AirPods"])
+    await m.startStop()
+    return m
+}
+
+@MainActor @Test func aSleepingMicAbsentAtRecordStaysListedAsNotConnected() async {
+    let e = FakeEngine()
+    let m = await absentAirPodsModel(e)
+    #expect(m.warning == "AirPods not connected")
+    e.snapshots = [SourceSnapshot(spec: SourceSpec(kind: .mic, uid: "ap", name: "AirPods"), status: .stopped, levelDb: -160, silent: false)]
+    m.tick()
+    #expect(m.warning == "AirPods not connected")
+}
+
+@MainActor @Test func aRecordingBackupIsNamedEvenWithoutALostMicNote() async {
+    let e = FakeEngine()
+    let m = await absentAirPodsModel(e)
+    e.backupState = .recording
+    e.snapshots = [
+        SourceSnapshot(spec: SourceSpec(kind: .mic, uid: "ap", name: "AirPods"), status: .waitingForDevice, levelDb: -160, silent: false),
+        SourceSnapshot(spec: SourceSpec(kind: .mic, uid: "bi", name: "MacBook Air Microphone"), status: .running, levelDb: -20, silent: false),
+    ]
+    m.tick()
+    #expect(m.warning == "AirPods not connected; Recording MacBook Air Microphone (backup)")
+}
