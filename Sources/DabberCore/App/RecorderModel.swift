@@ -217,7 +217,9 @@ public final class RecorderModel {
     }
 
     public var backupChoices: [BackupChoice] {
-        var choices = rows.filter { $0.id != Self.computerID }.map { BackupChoice(id: $0.id, title: $0.title) }
+        var choices = rows.filter { $0.id != Self.computerID }.map {
+            BackupChoice(id: $0.id, title: $0.title + ($0.enabled ? " (recorded)" : ""))
+        }
         if let uid = backupUID, !choices.contains(where: { $0.id == uid }) {
             choices.append(BackupChoice(id: uid, title: "\(names[uid] ?? uid) (not connected)"))
         }
@@ -347,6 +349,13 @@ public final class RecorderModel {
         phase = status.phase
         elapsed = Self.format(seconds: status.phase == .idle ? 0 : status.elapsedSeconds)
         var notes: [String] = []
+        let connected = Set(status.sources.filter { $0.status != .waitingForDevice }.compactMap(\.spec.uid))
+        let wasAbsent = !absentAtStart.isEmpty
+        absentAtStart.subtract(connected)
+        if status.phase == .idle || (wasAbsent && absentAtStart.isEmpty) {
+            startNote = nil
+            absentAtStart = []
+        }
         let backupNote = status.backup == .recording ? sessionBackup.map { " — recording \($0.name) (backup)" } ?? "" : ""
         var next = rows
         for i in next.indices {
@@ -373,12 +382,6 @@ public final class RecorderModel {
             }
         }
         if next != rows { rows = next }
-        let connected = Set(status.sources.filter { $0.status != .waitingForDevice }.compactMap(\.spec.uid))
-        let stillAbsent = absentAtStart.subtracting(connected)
-        if status.phase == .idle || (!absentAtStart.isEmpty && stillAbsent.isEmpty) {
-            startNote = nil
-            absentAtStart = []
-        }
         if status.phase == .idle, !marks.isEmpty || editingMarkID != nil {
             marks = []
             editingMarkID = nil
@@ -391,7 +394,7 @@ public final class RecorderModel {
             refreshDevices()
         }
         if let startNote {
-            let missing = rows.filter { stillAbsent.contains($0.id) }.map(\.name).joined(separator: ", ")
+            let missing = rows.filter { absentAtStart.contains($0.id) }.map(\.name).joined(separator: ", ")
             switch startNote {
             case .noneSelected(let fallback): notes.insert("No microphone selected — recording \(fallback)", at: 0)
             case .missing(let fallback): notes.insert("\(missing) not connected" + (fallback.map { " — recording \($0)" } ?? ""), at: 0)

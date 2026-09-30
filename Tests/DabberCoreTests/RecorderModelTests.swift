@@ -1133,7 +1133,7 @@ private func backupModel(
     let m = backupModel(e, devices: [airpods, usb, builtInMic, dabberMic], savedBackup: saved)
     #expect(m.backupUID == "bi")
     #expect(m.backupChoices.map(\.id) == ["ap", "usb", "bi"])
-    #expect(m.backupChoices.map(\.title) == ["AirPods", "USB", "MacBook Air Microphone"])
+    #expect(m.backupChoices.map(\.title) == ["AirPods (recorded)", "USB", "MacBook Air Microphone"])
     m.setBackup("usb")
     #expect(m.backupUID == "usb")
     #expect(saved.values == ["usb"])
@@ -1214,4 +1214,30 @@ private func backupModel(
     ]
     m.tick()
     #expect(m.warning == nil)
+}
+
+@MainActor @Test func aMicAbsentAtRecordThatRanAndWasLostNamesTheBackup() async {
+    let e = FakeEngine()
+    let ext = InputDevice(id: 7, uid: "ext", name: "External")
+    let m = backupModel(
+        e, enabled: ["computer", "ap", "usb", "ext"], devices: [ext, builtInMic], names: ["ap": "AirPods", "usb": "USB"])
+    await m.startStop()
+    #expect(m.warning == "AirPods, USB not connected")
+    let ap = SourceSpec(kind: .mic, uid: "ap", name: "AirPods")
+    let usbMic = SourceSpec(kind: .mic, uid: "usb", name: "USB")
+    let bi = SourceSpec(kind: .mic, uid: "bi", name: "MacBook Air Microphone")
+    e.snapshots = [
+        SourceSnapshot(spec: ap, status: .running, levelDb: -20, silent: false),
+        SourceSnapshot(spec: usbMic, status: .waitingForDevice, levelDb: -160, silent: false),
+    ]
+    m.tick()
+    #expect(m.warning == "USB not connected")
+    e.backupState = .recording
+    e.snapshots = [
+        SourceSnapshot(spec: ap, status: .waitingForDevice, levelDb: -160, silent: false),
+        SourceSnapshot(spec: usbMic, status: .waitingForDevice, levelDb: -160, silent: false),
+        SourceSnapshot(spec: bi, status: .running, levelDb: -20, silent: false),
+    ]
+    m.tick()
+    #expect(m.warning == "USB not connected; AirPods: waiting for device — recording MacBook Air Microphone (backup)")
 }
