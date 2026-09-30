@@ -55,6 +55,10 @@ public func deviceID(uid: String) throws -> AudioObjectID {
     return id
 }
 
+public func inputDeviceIsPresent(uid: String) -> Bool {
+    ((try? deviceID(uid: uid)) ?? kAudioObjectUnknown) != kAudioObjectUnknown
+}
+
 public func defaultInputDeviceUID() -> String? {
     guard let id = try? getValue(
         systemObject, address(kAudioHardwarePropertyDefaultInputDevice), default: AudioObjectID(kAudioObjectUnknown)),

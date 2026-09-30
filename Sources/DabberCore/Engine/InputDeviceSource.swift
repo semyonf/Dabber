@@ -23,7 +23,5 @@ public final class InputDeviceSource: CaptureSource, @unchecked Sendable {
             watched: [(device, .device), (stream, .inputStream)])
     }
 
-    override func deviceIsPresent() -> Bool {
-        ((try? deviceID(uid: uid)) ?? kAudioObjectUnknown) != kAudioObjectUnknown
-    }
+    override func deviceIsPresent() -> Bool { inputDeviceIsPresent(uid: uid) }
 }
