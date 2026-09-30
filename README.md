@@ -7,6 +7,8 @@ Dabber is a small macOS menu bar app that records what your Mac plays and what y
 - Mac audio and every chosen microphone are recorded as **separate tracks**, plus a stereo **mix** of all of them.
 - A microphone that disconnects during a recording (for example AirPods taken out of your ears or put in the case)
   does not stop the recording: Dabber waits for the device and continues when it comes back.
+- **Backup microphone**: while a recorded microphone is lost, Dabber records a backup microphone (by default the
+  Mac's built-in one) into its own track, so your voice is not lost when AirPods run out of battery.
 - If an enabled microphone stays silent for 10 seconds while the Mac is playing sound, the menu bar icon shows a
   warning, so a lost microphone is noticed during the recording, not after it.
 - **Marks**: press Mark at an important moment and optionally type a comment. Marks become chapters in the
@@ -127,7 +129,9 @@ with that name already exists, a number is added. Inside:
 2026-09-24 14-00 Weekly sync/
   2026-09-24 14-00 Weekly sync.m4a   the mix of all sources (stereo)
   computer audio.m4a                 Mac audio (stereo)
-  mic - MacBook Air Microphone.m4a   one file per microphone (mono)
+  mic - AirPods.m4a                  one file per microphone (mono)
+  mic - MacBook Air Microphone (backup).m4a
+                                     only if the backup microphone was used (mono)
   2026-09-24 14-00 Weekly sync.mp4   only with Record slides: the mix with the screen as slides
   marks.txt                          only if you made marks
   session.json                       technical details: sources, gaps, restarts
@@ -136,6 +140,21 @@ with that name already exists, a number is added. Inside:
 If none of the microphones you enabled is connected when you press Record, Dabber records the system default
 microphone instead and says so, for example "AirPods not connected — recording MacBook Air Microphone". If some
 enabled microphones are connected and others are not, it records the connected ones and names the missing ones.
+
+### Backup microphone
+
+**Backup mic:** under the sources chooses a microphone that takes over while a recorded microphone is lost, or None.
+On first launch it is the Mac's built-in microphone (None if the Mac has none). It cannot be changed while recording.
+
+When a recorded microphone disappears during a recording (for example AirPods run out of battery) or fails, Dabber
+starts recording the backup microphone into its own track `mic - <name> (backup).m4a`. The menu says so, for example
+"AirPods: waiting for device — recording MacBook Air Microphone (backup)". When every recorded microphone works
+again, the backup pauses; if a microphone is lost again, the backup continues in the same track. The pauses are
+silence in that track. The backup track is also part of the mix. Losing Mac audio does not start the backup.
+
+A recording that never lost a microphone has no backup track. If the backup microphone is itself one of the recorded
+microphones, it is not used as a backup in that recording. If it is needed but not connected, the menu says "Backup
+mic <name> not connected", and Dabber starts it as soon as it appears.
 
 ### Marks
 
@@ -236,6 +255,10 @@ Your recordings in the output folder are not touched.
   was absent when you started and another one is being recorded. The second means a microphone has been silent for
   10 seconds while the Mac was playing sound: check that the right microphone is enabled, not muted, and that Dabber
   is allowed in Privacy & Security > Microphone.
+- **Warning "… waiting for device — recording … (backup)" or "Backup mic … not connected".** A recorded microphone
+  was lost. The first means the backup microphone records in its place; the second means the backup microphone is
+  absent too, so nothing records your voice until one of them comes back. Choose a microphone that is always there
+  (usually the built-in one) under **Backup mic:**.
 - **Music or call audio sounds worse in AirPods while recording.** When any app uses the AirPods microphone, AirPods
   switch to a Bluetooth call mode with lower playback quality. This is how Bluetooth headsets work, not a Dabber
   setting. Use another microphone (for example the Mac's built-in one) if playback quality matters.
