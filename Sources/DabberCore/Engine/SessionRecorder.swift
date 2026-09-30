@@ -41,6 +41,17 @@ public struct RecorderStatus: Sendable, Equatable {
 }
 
 public final class SessionRecorder: @unchecked Sendable {
+    private struct Backup {
+        var spec: SourceSpec?
+        var source: CaptureSource?
+        var on = false
+        var started = false
+        var pending = 0
+        var present = true
+        var nextTry = Date.distantPast
+        var calmSince: Date?
+    }
+
     public typealias MakeSource = @Sendable (SourceSpec, URL, String) -> CaptureSource
 
     public let root: URL
@@ -61,9 +72,9 @@ public final class SessionRecorder: @unchecked Sendable {
     private var lastDiskCheck: Date?
     private var diskWarning: String?
     private var slides = false
-    private var backupSpec: SourceSpec?
-    private var backup: CaptureSource?
-    private var backupOn = false
+    private var backup = Backup()
+    private var ran: Set<ObjectIdentifier> = []
+    private var sleeping = false
     public private(set) var lastSessionDir: URL?
 
     public init(
@@ -128,9 +139,9 @@ public final class SessionRecorder: @unchecked Sendable {
         diskWarning = nil
         self.slides = slides
         let recorded = Set(specs.compactMap(\.uid))
-        backupSpec = backup.flatMap { b in b.uid.flatMap { recorded.contains($0) ? nil : b } }
-        self.backup = nil
-        backupOn = false
+        self.backup = Backup(spec: backup.flatMap { b in b.uid.flatMap { recorded.contains($0) ? nil : b } })
+        ran = Set(created.filter { $0.spec.kind == .mic && $0.status == .running }.map(ObjectIdentifier.init))
+        sleeping = false
         _ = state.start()
         sleepWatcher = SleepWatcher(
             willSleep: { [weak self] in self?.willSleep() },
@@ -176,15 +187,15 @@ public final class SessionRecorder: @unchecked Sendable {
             manifest.sources[i].restarts = source.restarts
             manifest.sources[i].overruns = source.overruns
         }
+        manifest.sources.removeAll { $0.backup == true && $0.segments.isEmpty }
         try? manifest.save(to: dir)
         self.manifest = nil
         self.sources = []
         self.dir = nil
         startedAt = nil
         diskWarning = nil
-        backupSpec = nil
-        backup = nil
-        backupOn = false
+        backup = Backup()
+        ran = []
         lastSessionDir = dir
         state.finished()
         return dir
@@ -225,13 +236,13 @@ public final class SessionRecorder: @unchecked Sendable {
 
     public func status(at now: Date = Date()) -> RecorderStatus {
         lock.lock()
-        let backupState = updateBackup()
+        let backupState = updateBackup(at: now)
         let computerDb = sources.first { $0.spec.kind == .computer }?.writer.meter.decibels ?? -160
         var snapshots: [SourceSnapshot] = []
         for source in sources {
             let db = source.writer.meter.decibels
             var silent = false
-            if source === backup, !backupOn {
+            if source === backup.source, !backup.on {
                 silence[source.writer.baseName] = nil
             } else if source.spec.kind == .mic {
                 var rule = silence[source.writer.baseName] ?? SilenceRule()
@@ -252,45 +263,92 @@ public final class SessionRecorder: @unchecked Sendable {
         return status
     }
 
-    private func updateBackup() -> BackupState {
-        guard state.phase == .recording, let spec = backupSpec, let uid = spec.uid, let dir, var manifest else { return .off }
-        let mics = sources.filter { $0.spec.kind == .mic && $0 !== backup }.map(\.status)
-        let wanted = BackupPolicy.active(mics, was: backupOn)
-        if wanted, !backupOn {
-            if let backup {
-                backupOn = true
-                backupQueue.async { backup.resume(reason: "backup") }
-            } else if devicePresent(uid) {
-                let base = SessionNaming.trackBase(
-                    kind: .mic, name: spec.name + " (backup)", taken: manifest.sources.map(\.trackBase))
-                let source = makeSource(spec, dir, base)
-                wire(source, index: sources.count)
-                sources.append(source)
-                manifest.sources.append(SourceManifest(
-                    kind: spec.kind, uid: spec.uid, name: spec.name, file: base + ".m4a",
-                    channels: source.writer.channels, segments: [], restarts: [], overruns: 0, backup: true))
-                self.manifest = manifest
-                try? manifest.save(to: dir)
-                backup = source
-                backupOn = true
-                backupQueue.async { try? source.start() }
+    private func updateBackup(at now: Date) -> BackupState {
+        guard state.phase == .recording, let spec = backup.spec, let uid = spec.uid, let manifest else { return .off }
+        for (i, source) in sources.enumerated()
+        where source.spec.kind == .mic && source !== backup.source
+            && (source.status == .running || !manifest.sources[i].segments.isEmpty) {
+            ran.insert(ObjectIdentifier(source))
+        }
+        let mics = sources.filter { ran.contains(ObjectIdentifier($0)) }.map(\.status)
+        backup.calmSince = mics.allSatisfy { $0 == .running } ? backup.calmSince ?? now : nil
+        let wanted = BackupPolicy.active(
+            mics, was: backup.on, calmFor: now.timeIntervalSince(backup.calmSince ?? now))
+        if !sleeping {
+            if wanted {
+                let turningOn = !backup.on
+                backup.on = true
+                if turningOn || (backup.pending == 0 && backupStalled && now >= backup.nextTry) {
+                    backup.pending += 1
+                    backup.nextTry = now.addingTimeInterval(BackupPolicy.retrySeconds)
+                    backupQueue.async { [self] in runBackup(spec, uid: uid) }
+                }
+            } else if backup.on {
+                backup.on = false
+                backupQueue.async { [self] in lock.withLock { backup.started ? backup.source : nil }?.pause() }
             }
-        } else if !wanted, backupOn, let backup {
-            backupOn = false
-            backupQueue.async { backup.pause() }
         }
         guard wanted else { return .off }
-        guard backupOn, let backup else { return .missing }
-        switch backup.status {
+        guard let source = backup.source else { return backup.present ? .recording : .missing }
+        switch source.status {
+        case .running, .restarting: return .recording
         case .waitingForDevice: return .missing
         case .failed(let why): return .failed(why)
-        case .running, .restarting, .stopped: return .recording
+        case .stopped: return backup.pending > 0 ? .recording : .missing
         }
     }
 
-    func willSleep() { forEachSource { $0.pause() } }
+    private var backupStalled: Bool {
+        guard let source = backup.source, backup.started else { return true }
+        if case .failed = source.status { return true }
+        return false
+    }
 
-    func didWake() { forEachSource { $0.resume() } }
+    private func runBackup(_ spec: SourceSpec, uid: String) {
+        defer { lock.withLock { backup.pending -= 1 } }
+        guard let source = backupSource(spec, uid: uid),
+              lock.withLock({ state.phase == .recording && backup.on && !sleeping })
+        else { return }
+        if lock.withLock({ backup.started }) {
+            switch source.status {
+            case .stopped, .failed: source.resume(reason: "backup")
+            case .running, .restarting, .waitingForDevice: break
+            }
+        } else if (try? source.start()) != nil {
+            lock.withLock { backup.started = true }
+        }
+    }
+
+    private func backupSource(_ spec: SourceSpec, uid: String) -> CaptureSource? {
+        if let source = lock.withLock({ backup.source }) { return source }
+        let present = devicePresent(uid)
+        lock.lock(); defer { lock.unlock() }
+        backup.present = present
+        guard present, state.phase == .recording, backup.on, let dir, var manifest else { return nil }
+        let base = SessionNaming.trackBase(kind: .mic, name: spec.name + " (backup)", taken: manifest.sources.map(\.trackBase))
+        let source = makeSource(spec, dir, base)
+        wire(source, index: sources.count)
+        sources.append(source)
+        manifest.sources.append(SourceManifest(
+            kind: spec.kind, uid: spec.uid, name: spec.name, file: base + ".m4a",
+            channels: source.writer.channels, segments: [], restarts: [], overruns: 0, backup: true))
+        self.manifest = manifest
+        try? manifest.save(to: dir)
+        backup.source = source
+        return source
+    }
+
+    func willSleep() {
+        lock.withLock { sleeping = true }
+        forEachSource { $0.pause() }
+        backupQueue.async { [self] in lock.withLock { backup.on && backup.started ? backup.source : nil }?.pause() }
+    }
+
+    func didWake() {
+        lock.withLock { sleeping = false }
+        forEachSource { $0.resume() }
+        backupQueue.async { [self] in lock.withLock { backup.on && backup.started ? backup.source : nil }?.resume() }
+    }
 
     private func checkDisk(at now: Date) -> Int64? {
         guard state.phase == .recording, let startedAt, let dir,
@@ -308,7 +366,7 @@ public final class SessionRecorder: @unchecked Sendable {
 
     private func forEachSource(_ body: (CaptureSource) -> Void) {
         lock.lock()
-        let sources = self.sources.filter { $0 !== backup || backupOn }
+        let sources = self.sources.filter { $0 !== backup.source }
         lock.unlock()
         for source in sources { body(source) }
     }
