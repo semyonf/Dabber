@@ -333,6 +333,37 @@ private func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }
         _ = r.stop()
     }
 
+    @Test func aBackupChosenWhileActiveTakesOverWhileTheLostMicRestarts() throws {
+        let calls = Calls()
+        let r = try recorder(calls)
+        _ = try activeBackup(r, calls)
+        calls["mic - AirPods"]!.set(.restarting("nsrt"))
+        r.setBackup(usb)
+        #expect(r.status(at: at(1)).backup == .recording)
+        #expect(waitUntil { calls.all.contains("started \(usbBase)") })
+        #expect(calls.backupCalls == ["start \(backupBase)", "started \(backupBase)", "pause \(backupBase)", "start \(usbBase)", "started \(usbBase)"])
+        #expect(r.status(at: at(1)).backup == .recording)
+        _ = r.stop()
+    }
+
+    @Test func aBackupChosenDuringSleepStartsAfterWake() throws {
+        let calls = Calls()
+        let r = try recorder(calls)
+        _ = try activeBackup(r, calls)
+        r.willSleep()
+        #expect(waitUntil { calls.backupCalls.last == "pause \(backupBase)" })
+        r.setBackup(usb)
+        _ = r.status(at: at(1))
+        r.didWake()
+        #expect(waitUntil {
+            _ = r.status(at: at(1))
+            return calls.all.contains("started \(usbBase)")
+        })
+        #expect(!calls.all.contains("resume \(backupBase) wake"))
+        #expect(r.status(at: at(1)).backup == .recording)
+        _ = r.stop()
+    }
+
     @Test func switchingBackToAFormerBackupResumesItsTrack() throws {
         let calls = Calls()
         let r = try recorder(calls)

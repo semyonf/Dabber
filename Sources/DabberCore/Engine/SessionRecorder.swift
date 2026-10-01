@@ -318,14 +318,16 @@ public final class SessionRecorder: @unchecked Sendable {
         lock.withLock {
             let spec = backup.usable(spec)
             guard state.phase == .recording, spec?.uid != backup.spec?.uid else { return }
-            if backup.on {
-                backup.on = false
-                pauseBackup(backup.spec?.uid)
-            }
+            if backup.on { pauseBackup(backup.spec?.uid) }
             backup.spec = spec
             backup.present = true
             backup.nextTry = .distantPast
             backup.lastFailure = nil
+            guard backup.on else { return }
+            guard let spec, let uid = spec.uid else { return backup.on = false }
+            guard !sleeping else { return }
+            backup.pending += 1
+            backupQueue.async { [self] in runBackup(spec, uid: uid) }
         }
     }
 
