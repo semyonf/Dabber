@@ -219,8 +219,9 @@ public final class RecorderModel {
     }
 
     public var backupChoices: [BackupChoice] {
+        let recorded = Set(sessionMics.compactMap(\.uid))
         var choices = rows.filter { $0.id != Self.computerID }.map {
-            BackupChoice(id: $0.id, title: $0.title + ($0.enabled ? " (recorded)" : ""))
+            BackupChoice(id: $0.id, title: $0.title + ($0.enabled || recorded.contains($0.id) ? " (recorded)" : ""))
         }
         if let uid = backupUID, !choices.contains(where: { $0.id == uid }) {
             choices.append(BackupChoice(id: uid, title: "\(names[uid] ?? uid) (not connected)"))

@@ -1178,6 +1178,16 @@ private func backupModel(
     #expect(m.warning == "AirPods: waiting for device — recording USB (backup)")
 }
 
+@MainActor @Test func theFallbackMicIsMarkedRecordedWhileRecording() async {
+    let e = FakeEngine()
+    let m = backupModel(e, enabled: ["computer"], defaultUID: "usb")
+    #expect(m.backupChoices.map(\.title) == ["AirPods", "USB", "MacBook Air Microphone"])
+    await m.startStop()
+    #expect(m.backupChoices.map(\.title) == ["AirPods", "USB (recorded)", "MacBook Air Microphone"])
+    await m.startStop()
+    #expect(m.backupChoices.map(\.title) == ["AirPods", "USB", "MacBook Air Microphone"])
+}
+
 @MainActor @Test func warningsNameTheBackupChosenWhileRecording() async {
     let e = FakeEngine()
     let m = backupModel(e)
