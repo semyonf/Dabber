@@ -304,6 +304,13 @@ public final class SessionRecorder: @unchecked Sendable {
         }
     }
 
+    public func setBackup(_ spec: SourceSpec?) {
+        lock.withLock {
+            guard state.phase == .recording else { return }
+            backup.spec = spec
+        }
+    }
+
     private var backupStalled: Bool {
         guard let source = backup.source, backup.started else { return true }
         if case .failed = source.status { return true }

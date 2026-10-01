@@ -78,7 +78,9 @@ private func recorder(_ calls: Calls, present: (@Sendable (String) -> Bool)? = n
 private let mac = SourceSpec(kind: .computer, uid: nil, name: "Computer audio")
 private let airpods = SourceSpec(kind: .mic, uid: "ap", name: "AirPods")
 private let builtIn = SourceSpec(kind: .mic, uid: "bi", name: "MacBook Air Microphone")
+private let usb = SourceSpec(kind: .mic, uid: "usb", name: "USB")
 private let backupBase = "mic - MacBook Air Microphone (backup)"
+private let usbBase = "mic - USB (backup)"
 private let t0 = Date(timeIntervalSince1970: 1_900_000_000)
 
 private func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }
@@ -297,6 +299,20 @@ private func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }
         #expect(done.wait(timeout: .now() + 3) == .success)
         #expect(calls.backupCalls.last == "stop \(backupBase)")
         #expect(calls[backupBase]?.status == .stopped)
+    }
+
+    @Test func aBackupChosenWhileInactiveIsUsedAtTheNextLoss() throws {
+        let calls = Calls()
+        let r = try recorder(calls)
+        let dir = try r.start(specs: [mac, airpods], backup: builtIn, at: t0)
+        r.setBackup(usb)
+        calls["mic - AirPods"]!.set(.waitingForDevice)
+        _ = r.status(at: at(0))
+        #expect(waitUntil { calls.all.contains("started \(usbBase)") })
+        #expect(r.status(at: at(0)).backup == .recording)
+        _ = r.stop()
+        #expect(calls[backupBase] == nil)
+        #expect(try SessionManifest.load(from: dir).sources.map(\.file).last == usbBase + ".m4a")
     }
 }
 
