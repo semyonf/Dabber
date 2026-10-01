@@ -12,14 +12,16 @@ another microphone until it comes back.
 
 | Topic | Decision |
 |---|---|
-| Setting | "Backup mic:" picker in the RECORDING section: None or one input device (not "Dabber Mic"); locked while recording. Enabled (recorded) microphones carry a "(recorded)" suffix, since such a choice disables the backup for that session |
+| Setting | "Backup mic:" picker in the RECORDING section: None or one input device (not "Dabber Mic"). It also works while recording (see "Change while recording"). Enabled (recorded) microphones carry a "(recorded)" suffix, since such a choice disables the backup for that session |
 | Default | On first launch the Mac's built-in microphone (CoreAudio transport type built-in), None if there is none. The default is not saved until the user picks something, so it is found again at every launch until then |
 | Saved | UserDefaults key `backupMic`: the UID, or an empty string for None. Its name is kept with the source names, for the menu while the device is absent |
 | Trigger | While recording, some recorded microphone (not Mac audio) is waiting for its device or has failed, and it has run in this session (was running at a status poll or has a segment). A microphone absent at Record, including the case with the fallback to the default microphone, does not trigger the backup until it has run |
 | Not a trigger | Mac audio in any state; a microphone that is restarting (a short, normal state) |
 | Back to normal | Every recorded microphone has been running continuously for 2.5 s (`BackupPolicy.settleSeconds`, measured with the `now` passed to `status(at:)`): the backup pauses. The next loss resumes it |
 | Restarting or stopped (sleep) microphones | Keep the backup as it is: on stays on, off stays off |
-| Track | `mic - <name> (backup).m4a`, one track for the whole session; pauses are silent gaps. It is marked `"backup": true` in `session.json` (absent in older manifests) |
+| Track | `mic - <name> (backup).m4a`, one track per backup device for the whole session; pauses are silent gaps. It is marked `"backup": true` in `session.json` (absent in older manifests) |
+| Change while recording | `RecorderModel.setBackup` saves the choice as before and passes the spec to `RecordingEngine.setBackup` (nil for None or a microphone recorded in this session), then polls at once. If the backup is off, the engine only replaces the spec, used at the next loss. If it is on, the engine turns it off and queues a pause of the old source on the backup queue; the next poll turns the backup on again with the new device if a microphone is still lost, so the new device starts in its own track. The old source stays in the session with its segments, paused. A device that already has a backup source in this session reuses it (resume with the reason "backup"), so there is never a second track for the same UID. None, or a device recorded as a normal source, turns the backup off until another device is chosen |
+| Several backup tracks | Status, warnings and retries follow the current backup only. Every backup source is excluded from sleep and wake of the normal sources: wake resumes only the current backup and only if it is on, so former backups stay paused. `stop()` stops every source, backups included; a backup source without segments is still dropped from `session.json`. All backup tracks are left out of the 1/N mix gain. `SourceSnapshot.backup` marks every backup source, and the model shows no lost-microphone warning for them |
 | Mix | The backup goes into the mix at the same gain as the other tracks but is not counted in the 1/N gain: it replaces a lost microphone, so using it does not make the whole mix quieter |
 | Session without a loss | No backup track: the backup joins `session.json` and the recording only at its first use. A backup that joined but never recorded a segment (for example every start failed) is removed from `session.json` at stop, so no silent full-length track appears |
 | Already recorded | A backup that is also a recorded source (same UID) is ignored for that session, including the fallback to the default microphone at Record |
@@ -55,17 +57,19 @@ another microphone until it comes back.
 
 - `BackupPolicy` (Engine): pure. Tested.
 - `SessionRecorder`: activation, settle time, absent-at-start microphones, pause, resume, naming, manifest, missing
-  device, slow presence check, sleep and wake (also during a start), stop, a backup that never recorded. Tested with
+  device, slow presence check, sleep and wake (also during a start), stop, a backup that never recorded, a change of
+  the backup while it is off, while it records, during its start, back to a former backup, to None and to a recorded
+  microphone, stop and wake with two backup sources. Tested with
   fake sources; the pause and resume path and the retry of a failed start are also tested through `CaptureSource`
   with fake device hooks.
-- `Finalizer`: a track that starts late and has a gap is placed on the timeline; a backup track does not lower the
-  mix level. Tested.
-- `RecorderModel`: setting, first-launch default, persistence, lock, the "(recorded)" marks, the spec passed to the
+- `Finalizer`: a track that starts late and has a gap is placed on the timeline; one or two backup tracks do not lower
+  the mix level. Tested.
+- `RecorderModel`: setting, first-launch default, persistence, the change while recording, the "(recorded)" marks, the spec passed to the
   engine, warnings (also for a microphone that was absent at Record, came back and was lost again). Tested with a
   fake engine.
 - `InputDevice.builtIn` (transport type) and the picker in the menu: hardware check only.
 
 ## Out of scope
 
-More than one backup, a backup for Mac audio, switching to the backup on silence (no signal) instead of on a lost
+More than one backup at a time, a backup for Mac audio, switching to the backup on silence (no signal) instead of on a lost
 device, choosing the backup per recording.

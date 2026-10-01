@@ -144,8 +144,8 @@ enabled microphones are connected and others are not, it records the connected o
 ### Backup microphone
 
 **Backup mic:** under the sources chooses a microphone that takes over while a recorded microphone is lost, or None.
-On first launch it is the Mac's built-in microphone (None if the Mac has none). It cannot be changed while recording.
-Microphones you record are marked "(recorded)" in this list: a recorded microphone does not serve as the backup.
+On first launch it is the Mac's built-in microphone (None if the Mac has none). Microphones you record are marked
+"(recorded)" in this list: a recorded microphone does not serve as the backup.
 
 When a recorded microphone disappears during a recording (for example AirPods run out of battery) or fails, Dabber
 starts recording the backup microphone into its own track `mic - <name> (backup).m4a`. The menu says so, for example
@@ -159,6 +159,13 @@ lost again. A recording in which the backup never recorded has no backup track. 
 one of the recorded microphones, it is not used as a backup in that recording. If the backup cannot start, the menu
 says "Backup mic <name> failed (…)" and Dabber tries again every few seconds. If it is needed but not connected, the
 menu says "Backup mic <name> not connected", and Dabber starts it as soon as it appears.
+
+You can change the backup microphone while recording. If the backup is not recording at that moment, the new choice is
+used at the next loss. If it is recording, the old backup pauses and the new microphone takes over at once in its own
+track, for example `mic - USB (backup).m4a`. Switching back to a microphone that already has a backup track in this
+recording continues that track. Choosing None or a recorded microphone turns the backup off for the rest of the
+recording, until you choose another microphone. Every backup track that recorded something stays in the recording and in
+the mix.
 
 ### Marks
 
