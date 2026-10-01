@@ -4,6 +4,7 @@ import Observation
 public protocol RecordingEngine: Sendable {
     func start(specs: [SourceSpec], backup: SourceSpec?, title: String, slides: Bool) throws -> URL
     func setTitle(_ title: String)
+    func setBackup(_ spec: SourceSpec?)
     func stop() -> URL?
     func status(at now: Date) -> RecorderStatus
     var lastSessionDir: URL? { get }
@@ -228,10 +229,20 @@ public final class RecorderModel {
     }
 
     public func setBackup(_ uid: String?) {
-        guard !isRecording else { return }
         backupUID = uid
         persistBackup(uid)
         rememberNames()
+        guard isRecording else { return }
+        sessionBackup = backupSpec(recorded: Set(sessionMics.compactMap(\.uid)))
+        engine.setBackup(sessionBackup)
+        tick()
+    }
+
+    private func backupSpec(recorded: Set<String>) -> SourceSpec? {
+        backupUID.flatMap { uid in
+            recorded.contains(uid)
+                ? nil : SourceSpec(kind: .mic, uid: uid, name: rows.first { $0.id == uid }?.name ?? names[uid] ?? uid)
+        }
     }
 
     public func deliveryDone(failure: String?) {
@@ -376,6 +387,7 @@ public final class RecorderModel {
             guard let snapshot else { continue }
             if snapshot.status == .waitingForDevice, absentAtStart.contains(next[i].id) { continue }
             if next[i].silent { notes.append("\(next[i].label): no signal for 10 s") }
+            if snapshot.backup { continue }
             if let sessionBackup, snapshot.spec.uid == sessionBackup.uid { continue }
             switch snapshot.status {
             case .restarting(let reason): notes.append("\(next[i].label): restarting (\(reason))")
@@ -496,11 +508,7 @@ public final class RecorderModel {
         } else {
             startNote = .unavailable
         }
-        let recorded = Set(specs.compactMap(\.uid))
-        let backup = backupUID.flatMap { uid in
-            recorded.contains(uid)
-                ? nil : SourceSpec(kind: .mic, uid: uid, name: rows.first { $0.id == uid }?.name ?? names[uid] ?? uid)
-        }
+        let backup = backupSpec(recorded: Set(specs.compactMap(\.uid)))
         let engine = self.engine
         let startSpecs = specs
         let recordSlides = slidesOn && slides != nil

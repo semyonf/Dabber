@@ -93,7 +93,6 @@ struct RecordingSection: View {
                 Text("None").tag("")
                 ForEach(model.backupChoices) { choice in Text(choice.title).tag(choice.id) }
             }
-            .disabled(model.isRecording)
             Toggle("Record slides", isOn: Binding(get: { model.slidesOn }, set: { _ in model.toggleSlides() }))
                 .disabled(model.isRecording)
             if model.isRecording {

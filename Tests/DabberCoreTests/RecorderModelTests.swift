@@ -7,6 +7,7 @@ import Testing
 private final class FakeEngine: RecordingEngine, @unchecked Sendable {
     var started: [[SourceSpec]] = []
     var backups: [SourceSpec?] = []
+    var backupChanges: [SourceSpec?] = []
     var backupState: BackupState = .off
     var slides: [Bool] = []
     let frames = Mutex<[UInt64]>([])
@@ -33,6 +34,8 @@ private final class FakeEngine: RecordingEngine, @unchecked Sendable {
         phase = .recording
         return dir
     }
+
+    func setBackup(_ spec: SourceSpec?) { backupChanges.append(spec) }
 
     func stop() -> URL? {
         guard phase != .idle else { return nil }
@@ -1028,6 +1031,7 @@ private final class SlowStopEngine: RecordingEngine, @unchecked Sendable {
     }
 
     func setTitle(_ title: String) {}
+    func setBackup(_ spec: SourceSpec?) {}
     func status(at now: Date) -> RecorderStatus {
         RecorderStatus(phase: phase, elapsedSeconds: 1, sources: [], sessionDir: nil, lastError: nil)
     }
@@ -1126,7 +1130,7 @@ private func backupModel(
     #expect(RecorderModel.backupSetting(saved: "usb", devices: [builtInMic]) == "usb")
 }
 
-@MainActor @Test func backupChoiceIsSavedAndLockedWhileRecording() async {
+@MainActor @Test func backupChoiceIsSavedAndChangesTheBackupWhileRecording() async {
     let e = FakeEngine()
     let saved = Saved<String?>()
     let dabberMic = InputDevice(id: 9, uid: FeedDevices.micUID, name: "Dabber Mic")
@@ -1137,14 +1141,50 @@ private func backupModel(
     m.setBackup("usb")
     #expect(m.backupUID == "usb")
     #expect(saved.values == ["usb"])
+    #expect(e.backupChanges.isEmpty)
     await m.startStop()
-    m.setBackup(nil)
-    #expect(m.backupUID == "usb")
-    #expect(saved.values == ["usb"])
-    await m.startStop()
+    #expect(e.backups == [SourceSpec(kind: .mic, uid: "usb", name: "USB")])
+    m.setBackup("bi")
+    m.setBackup("ap")
     m.setBackup(nil)
     #expect(m.backupUID == nil)
-    #expect(saved.values == ["usb", nil])
+    #expect(saved.values == ["usb", "bi", "ap", nil])
+    #expect(e.backupChanges == [SourceSpec(kind: .mic, uid: "bi", name: "MacBook Air Microphone"), nil, nil])
+    #expect(m.backupChoices.map(\.title) == ["AirPods (recorded)", "USB", "MacBook Air Microphone"])
+    await m.startStop()
+    m.setBackup("usb")
+    #expect(m.backupUID == "usb")
+    #expect(e.backupChanges.count == 3)
+}
+
+@MainActor @Test func warningsNameTheBackupChosenWhileRecording() async {
+    let e = FakeEngine()
+    let m = backupModel(e)
+    await m.startStop()
+    m.setBackup("usb")
+    let ap = SourceSpec(kind: .mic, uid: "ap", name: "AirPods")
+    let bi = SourceSpec(kind: .mic, uid: "bi", name: "MacBook Air Microphone")
+    let usbMic = SourceSpec(kind: .mic, uid: "usb", name: "USB")
+    e.backupState = .recording
+    e.snapshots = [
+        SourceSnapshot(spec: ap, status: .waitingForDevice, levelDb: -160, silent: false),
+        SourceSnapshot(spec: bi, status: .failed("x"), levelDb: -160, silent: false, backup: true),
+        SourceSnapshot(spec: usbMic, status: .running, levelDb: -20, silent: false, backup: true),
+    ]
+    m.tick()
+    #expect(m.warning == "AirPods: waiting for device — recording USB (backup)")
+    e.backupState = .missing
+    e.snapshots.removeLast()
+    m.tick()
+    #expect(m.warning == "AirPods: waiting for device; Backup mic USB not connected")
+    m.setBackup("ap")
+    e.backupState = .off
+    m.tick()
+    #expect(m.warning == "AirPods: waiting for device")
+    let mac = SourceSpec(kind: .computer, uid: nil, name: "Computer audio")
+    e.snapshots.insert(SourceSnapshot(spec: mac, status: .restarting("x"), levelDb: -160, silent: false), at: 0)
+    m.tick()
+    #expect(m.warning == "Mac audio: restarting (x); AirPods: waiting for device")
 }
 
 @MainActor @Test func anAbsentBackupIsListedUnderItsSavedName() {
