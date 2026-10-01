@@ -404,6 +404,29 @@ private func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }
         #expect(calls[backupBase]?.status == .stopped)
         _ = r.stop()
     }
+
+    @Test func aSwitchDuringABackupStartPausesItAfterTheStart() throws {
+        let calls = Calls()
+        let gate = DispatchSemaphore(value: 0)
+        calls.gate = gate
+        defer {
+            gate.signal()
+            gate.signal()
+        }
+        let r = try recorder(calls)
+        _ = try r.start(specs: [mac, airpods], backup: builtIn, at: t0)
+        calls["mic - AirPods"]!.set(.waitingForDevice)
+        _ = r.status(at: at(0))
+        #expect(waitUntil { calls.all.contains("start \(backupBase)") })
+        r.setBackup(usb)
+        _ = r.status(at: at(0.2))
+        gate.signal()
+        gate.signal()
+        #expect(waitUntil { calls.all.contains("started \(usbBase)") })
+        #expect(calls.backupCalls == ["start \(backupBase)", "started \(backupBase)", "pause \(backupBase)", "start \(usbBase)", "started \(usbBase)"])
+        #expect(r.status(at: at(0.2)).backup == .recording)
+        _ = r.stop()
+    }
 }
 
 private func activeBackup(_ r: SessionRecorder, _ calls: Calls, specs: [SourceSpec] = [mac, airpods]) throws -> URL {
