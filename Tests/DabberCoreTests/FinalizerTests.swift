@@ -190,8 +190,8 @@ extension FinalizerTests {
         #expect(try rms(mix, from: 130_000, frames: 4_800) > 0.1)
     }
 
-    @Test func aBackupTrackDoesNotLowerTheMix() throws {
-        func mixRMS(backup: Bool) throws -> Float {
+    @Test func backupTracksDoNotLowerTheMix() throws {
+        func mixRMS(backups: Int) throws -> Float {
             let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fin-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let s: UInt64 = 10_000_000_000
@@ -204,11 +204,12 @@ extension FinalizerTests {
                     SegmentRecord(file: "mic - AirPods.seg000.caf", startNanos: s, frames: 96_000, endNanos: s + 2_000_000_000, sourceRate: 48_000, sourceChannels: 1, reason: "start"),
                 ], restarts: [], overruns: 0),
             ]
-            if backup {
-                m.sources.append(SourceManifest(kind: .mic, uid: "bi", name: "Built-in", file: "mic - Built-in (backup).m4a", channels: 1, segments: [
-                    SegmentRecord(file: "mic - Built-in (backup).seg000.caf", startNanos: s + 2_000_000_000, frames: 48_000, endNanos: s + 3_000_000_000, sourceRate: 48_000, sourceChannels: 1, reason: "start"),
+            for (uid, name) in [("bi", "Built-in"), ("usb", "USB")].prefix(backups) {
+                let base = "mic - \(name) (backup)"
+                m.sources.append(SourceManifest(kind: .mic, uid: uid, name: name, file: base + ".m4a", channels: 1, segments: [
+                    SegmentRecord(file: base + ".seg000.caf", startNanos: s + 2_000_000_000, frames: 48_000, endNanos: s + 3_000_000_000, sourceRate: 48_000, sourceChannels: 1, reason: "start"),
                 ], restarts: [], overruns: 0, backup: true))
-                try writeCAF(dir.appendingPathComponent("mic - Built-in (backup).seg000.caf"), samples: sine(frames: 48_000, channels: 1), channels: 1)
+                try writeCAF(dir.appendingPathComponent(base + ".seg000.caf"), samples: sine(frames: 48_000, channels: 1), channels: 1)
             }
             try m.save(to: dir)
             try writeCAF(dir.appendingPathComponent("computer audio.seg000.caf"), samples: [Float](repeating: 0, count: 144_000 * 2), channels: 2)
@@ -216,10 +217,11 @@ extension FinalizerTests {
             try Finalizer.run(dir)
             return try rms(dir.appendingPathComponent("mix.m4a"), from: 24_000, frames: 4_800)
         }
-        let without = try mixRMS(backup: false)
-        let with = try mixRMS(backup: true)
+        let without = try mixRMS(backups: 0)
         #expect(without > 0.1)
-        #expect(abs(20 * log10(with / without)) < 0.5)
+        for backups in [1, 2] {
+            #expect(abs(20 * log10(try mixRMS(backups: backups) / without)) < 0.5)
+        }
     }
 
     @Test func sourceThatNeverConnectedBecomesASilentFullLengthTrack() throws {
