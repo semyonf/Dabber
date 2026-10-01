@@ -1157,6 +1157,27 @@ private func backupModel(
     #expect(e.backupChanges.count == 3)
 }
 
+@MainActor @Test func aBackupChosenWhileRecordStartsIsUsed() async {
+    let e = FakeEngine()
+    let gate = DispatchSemaphore(value: 0)
+    defer { gate.signal() }
+    e.startGate = gate
+    let m = backupModel(e)
+    let starting = Task { await m.startStop() }
+    #expect(await eventually { e.startEntered.load(ordering: .relaxed) })
+    m.setBackup("usb")
+    #expect(e.backupChanges.isEmpty)
+    gate.signal()
+    await starting.value
+    let usbMic = SourceSpec(kind: .mic, uid: "usb", name: "USB")
+    #expect(e.backups == [SourceSpec(kind: .mic, uid: "bi", name: "MacBook Air Microphone")])
+    #expect(e.backupChanges == [usbMic])
+    e.backupState = .recording
+    e.snapshots = [SourceSnapshot(spec: SourceSpec(kind: .mic, uid: "ap", name: "AirPods"), status: .waitingForDevice, levelDb: -160, silent: false)]
+    m.tick()
+    #expect(m.warning == "AirPods: waiting for device — recording USB (backup)")
+}
+
 @MainActor @Test func warningsNameTheBackupChosenWhileRecording() async {
     let e = FakeEngine()
     let m = backupModel(e)

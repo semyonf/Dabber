@@ -522,7 +522,8 @@ public final class RecorderModel {
             hotkeyAllowed = hotkey?.start { [weak self] in Task { @MainActor in self?.mark() } }
             self.title = title
             sessionMics = startSpecs.filter { $0.kind == .mic }
-            sessionBackup = backup
+            sessionBackup = backupSpec(recorded: Set(startSpecs.compactMap(\.uid)))
+            if sessionBackup != backup { engine.setBackup(sessionBackup) }
             stopErrorSeen = false
             finalizedDir = nil
             errorText = nil
