@@ -314,6 +314,32 @@ private func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }
         #expect(calls[backupBase] == nil)
         #expect(try SessionManifest.load(from: dir).sources.map(\.file).last == usbBase + ".m4a")
     }
+
+    @Test func aBackupChosenWhileActivePausesTheOldOneAndTakesOver() throws {
+        let calls = Calls()
+        let r = try recorder(calls)
+        let dir = try activeBackup(r, calls)
+        r.setBackup(usb)
+        _ = r.status(at: at(1))
+        #expect(waitUntil { calls.all.contains("started \(usbBase)") })
+        #expect(calls.backupCalls == ["start \(backupBase)", "started \(backupBase)", "pause \(backupBase)", "start \(usbBase)", "started \(usbBase)"])
+        #expect(r.status(at: at(1)).backup == .recording)
+        #expect(r.status(at: at(1)).sources.map(\.spec.uid) == [nil, "ap", "bi", "usb"])
+        #expect(r.status(at: at(1)).sources.map(\.backup) == [false, false, true, true])
+        #expect(waitUntil { (try? SessionManifest.load(from: dir))?.sources.last?.segments.count == 1 })
+        let m = try SessionManifest.load(from: dir)
+        #expect(m.sources.map(\.file) == ["computer audio.m4a", "mic - AirPods.m4a", backupBase + ".m4a", usbBase + ".m4a"])
+        #expect(m.sources.map(\.backup) == [nil, nil, true, true])
+        _ = r.stop()
+    }
+}
+
+private func activeBackup(_ r: SessionRecorder, _ calls: Calls, specs: [SourceSpec] = [mac, airpods]) throws -> URL {
+    let dir = try r.start(specs: specs, backup: builtIn, at: t0)
+    calls["mic - AirPods"]!.set(.waitingForDevice)
+    _ = r.status(at: at(0))
+    #expect(waitUntil { calls.all.contains("started \(backupBase)") })
+    return dir
 }
 
 private final class DeviceFake: CaptureSource, @unchecked Sendable {

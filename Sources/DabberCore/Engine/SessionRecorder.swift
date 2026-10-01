@@ -21,6 +21,7 @@ public struct SourceSnapshot: Sendable, Equatable {
     public let status: SourceStatus
     public let levelDb: Double
     public let silent: Bool
+    public var backup = false
 }
 
 public enum BackupState: Sendable, Equatable {
@@ -43,14 +44,19 @@ public struct RecorderStatus: Sendable, Equatable {
 public final class SessionRecorder: @unchecked Sendable {
     private struct Backup {
         var spec: SourceSpec?
-        var source: CaptureSource?
+        var made: [String: CaptureSource] = [:]
+        var started: Set<String> = []
         var on = false
-        var started = false
         var pending = 0
         var present = true
         var nextTry = Date.distantPast
         var calmSince: Date?
         var lastFailure: String?
+
+        var source: CaptureSource? { spec?.uid.flatMap { made[$0] } }
+        var isStarted: Bool { spec?.uid.map(started.contains) ?? false }
+        func owns(_ source: CaptureSource) -> Bool { made.values.contains { $0 === source } }
+        func startedSource(_ uid: String?) -> CaptureSource? { uid.flatMap { started.contains($0) ? made[$0] : nil } }
     }
 
     public typealias MakeSource = @Sendable (SourceSpec, URL, String) -> CaptureSource
@@ -243,14 +249,15 @@ public final class SessionRecorder: @unchecked Sendable {
         for source in sources {
             let db = source.writer.meter.decibels
             var silent = false
-            if source === backup.source, !backup.on {
+            let isBackup = backup.owns(source)
+            if isBackup, !(source === backup.source && backup.on) {
                 silence[source.writer.baseName] = nil
             } else if source.spec.kind == .mic {
                 var rule = silence[source.writer.baseName] ?? SilenceRule()
                 silent = rule.update(micDb: db, computerDb: computerDb, now: now.timeIntervalSince1970)
                 silence[source.writer.baseName] = rule
             }
-            snapshots.append(SourceSnapshot(spec: source.spec, status: source.status, levelDb: db, silent: silent))
+            snapshots.append(SourceSnapshot(spec: source.spec, status: source.status, levelDb: db, silent: silent, backup: isBackup))
         }
         let full = checkDisk(at: now)
         let status = RecorderStatus(
@@ -267,7 +274,7 @@ public final class SessionRecorder: @unchecked Sendable {
     private func updateBackup(at now: Date) -> BackupState {
         guard state.phase == .recording, let spec = backup.spec, let uid = spec.uid, let manifest else { return .off }
         for (i, source) in sources.enumerated()
-        where source.spec.kind == .mic && source !== backup.source
+        where source.spec.kind == .mic && !backup.owns(source)
             && (source.status == .running || !manifest.sources[i].segments.isEmpty) {
             ran.insert(ObjectIdentifier(source))
         }
@@ -286,7 +293,7 @@ public final class SessionRecorder: @unchecked Sendable {
                 }
             } else if backup.on {
                 backup.on = false
-                backupQueue.async { [self] in lock.withLock { backup.started ? backup.source : nil }?.pause() }
+                pauseBackup(uid)
             }
         }
         guard wanted else { return .off }
@@ -306,13 +313,24 @@ public final class SessionRecorder: @unchecked Sendable {
 
     public func setBackup(_ spec: SourceSpec?) {
         lock.withLock {
-            guard state.phase == .recording else { return }
+            guard state.phase == .recording, spec?.uid != backup.spec?.uid else { return }
+            if backup.on {
+                backup.on = false
+                pauseBackup(backup.spec?.uid)
+            }
             backup.spec = spec
+            backup.present = true
+            backup.nextTry = .distantPast
+            backup.lastFailure = nil
         }
     }
 
+    private func pauseBackup(_ uid: String?) {
+        backupQueue.async { [self] in lock.withLock { backup.startedSource(uid) }?.pause() }
+    }
+
     private var backupStalled: Bool {
-        guard let source = backup.source, backup.started else { return true }
+        guard let source = backup.source, backup.isStarted else { return true }
         if case .failed = source.status { return true }
         return false
     }
@@ -320,22 +338,23 @@ public final class SessionRecorder: @unchecked Sendable {
     private func runBackup(_ spec: SourceSpec, uid: String) {
         defer { lock.withLock { backup.pending -= 1 } }
         guard let source = backupSource(spec, uid: uid),
-              lock.withLock({ state.phase == .recording && backup.on && !sleeping })
+              lock.withLock({ state.phase == .recording && backup.on && !sleeping && backup.spec?.uid == uid })
         else { return }
-        if lock.withLock({ backup.started }) {
+        if lock.withLock({ backup.started.contains(uid) }) {
             switch source.status {
             case .stopped, .failed: resumeBackup(source, reason: "backup")
             case .running, .restarting, .waitingForDevice: break
             }
         } else if (try? source.start()) != nil {
-            lock.withLock { backup.started = true }
+            lock.withLock { _ = backup.started.insert(uid) }
         }
     }
 
     private func backupSource(_ spec: SourceSpec, uid: String) -> CaptureSource? {
-        if let source = lock.withLock({ backup.source }) { return source }
+        if let source = lock.withLock({ backup.made[uid] }) { return source }
         let present = devicePresent(uid)
         lock.lock(); defer { lock.unlock() }
+        guard backup.spec?.uid == uid else { return nil }
         backup.present = present
         guard present, state.phase == .recording, backup.on, let dir, var manifest else { return nil }
         let base = SessionNaming.trackBase(kind: .mic, name: spec.name + " (backup)", taken: manifest.sources.map(\.trackBase))
@@ -347,14 +366,14 @@ public final class SessionRecorder: @unchecked Sendable {
             channels: source.writer.channels, segments: [], restarts: [], overruns: 0, backup: true))
         self.manifest = manifest
         try? manifest.save(to: dir)
-        backup.source = source
+        backup.made[uid] = source
         return source
     }
 
     func willSleep() {
         lock.withLock { sleeping = true }
         forEachSource { $0.pause() }
-        backupQueue.async { [self] in lock.withLock { backup.on && backup.started ? backup.source : nil }?.pause() }
+        backupQueue.async { [self] in lock.withLock { backup.on && backup.isStarted ? backup.source : nil }?.pause() }
     }
 
     func didWake() {
@@ -365,7 +384,7 @@ public final class SessionRecorder: @unchecked Sendable {
         forEachSource { $0.resume() }
         backupQueue.async { [self] in
             defer { lock.withLock { backup.pending -= 1 } }
-            if let source = lock.withLock({ backup.on && backup.started ? backup.source : nil }) {
+            if let source = lock.withLock({ backup.on && backup.isStarted ? backup.source : nil }) {
                 resumeBackup(source, reason: "wake")
             }
         }
