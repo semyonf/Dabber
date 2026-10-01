@@ -31,3 +31,11 @@ import CoreAudio
     #expect(try deviceID(uid: first.uid) == first.id)
     #expect(try deviceID(uid: "no-such-device") == kAudioObjectUnknown)
 }
+
+@Test func inputPresenceFollowsTheDeviceList() throws {
+    let first = try #require(try inputDevices().first)
+    #expect(inputDeviceIsPresent(uid: first.uid))
+    #expect(try listedDeviceID(uid: first.uid) == first.id)
+    #expect(!inputDeviceIsPresent(uid: "no-such-device"))
+    #expect(try listedDeviceID(uid: "no-such-device") == nil)
+}

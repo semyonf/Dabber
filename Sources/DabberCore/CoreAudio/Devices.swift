@@ -58,8 +58,15 @@ public func deviceID(uid: String) throws -> AudioObjectID {
     return id
 }
 
+// Presence follows the system device list, as the menu does. AirPods put in the case leave the list
+// at once, yet their UID still translates to the old object and DeviceIsAlive comes late or never.
 public func inputDeviceIsPresent(uid: String) -> Bool {
-    ((try? deviceID(uid: uid)) ?? kAudioObjectUnknown) != kAudioObjectUnknown
+    (try? inputDevices())?.contains { $0.uid == uid } ?? false
+}
+
+func listedDeviceID(uid: String) throws -> AudioObjectID? {
+    try getArray(systemObject, address(kAudioHardwarePropertyDevices), filler: AudioObjectID(0))
+        .first { (try? getString($0, address(kAudioDevicePropertyDeviceUID))) == uid }
 }
 
 public func defaultInputDeviceUID() -> String? {

@@ -10,8 +10,7 @@ public final class InputDeviceSource: CaptureSource, @unchecked Sendable {
     }
 
     override func openDevice() throws -> OpenedDevice {
-        let device = try deviceID(uid: uid)
-        guard device != kAudioObjectUnknown else { throw SourceError.deviceMissing(uid) }
+        guard let device = try listedDeviceID(uid: uid) else { throw SourceError.deviceMissing(uid) }
         let streams = try getArray(
             device, address(kAudioDevicePropertyStreams, scope: kAudioObjectPropertyScopeInput),
             filler: AudioObjectID(0))

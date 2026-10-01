@@ -1,3 +1,4 @@
+import CoreAudio
 import Foundation
 import Synchronization
 import Testing
@@ -491,9 +492,14 @@ private final class DeviceFake: CaptureSource, @unchecked Sendable {
 
 private final class Devices: Sendable {
     let made = Mutex<[String: DeviceFake]>([:])
+    let systemHandlers = Mutex<[PropertyWatcher.Handler]>([])
     let backupFailures: Int
     init(backupFailures: Int = 0) { self.backupFailures = backupFailures }
     subscript(base: String) -> DeviceFake? { made.withLock { $0[base] } }
+
+    func listChanged() {
+        for handler in systemHandlers.withLock({ $0 }) { handler(systemObject, kAudioHardwarePropertyDevices) }
+    }
 }
 
 private let backupDevice = "mic - Built-in (backup)"
@@ -501,7 +507,12 @@ private let backupDevice = "mic - Built-in (backup)"
 private func deviceRecorder(_ devices: Devices) throws -> SessionRecorder {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("srd-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    let hooks = CaptureHooks(startIO: { _, _ in {} }, watch: { _, _ in {} })
+    let hooks = CaptureHooks(
+        startIO: { _, _ in {} },
+        watch: { objects, handler in
+            if objects.contains(where: { $0.0 == systemObject }) { devices.systemHandlers.withLock { $0.append(handler) } }
+            return {}
+        })
     let r = SessionRecorder(
         root: root, appVersion: "t",
         makeSource: { spec, dir, base in
@@ -541,6 +552,28 @@ private func polls(_ r: SessionRecorder, at now: Date, for seconds: Double, unti
 }
 
 @Suite(.serialized) struct SessionRecorderBackupDeviceTests {
+    @Test func aMicThatLeavesTheDeviceListWithoutDeviceIsAliveStartsTheBackupAtOnceAndResumesOnReturn() throws {
+        let devices = Devices()
+        let r = try deviceRecorder(devices)
+        let ap = try #require(devices["mic - AirPods"])
+        #expect(ap.status == .running)
+        ap.present.store(false, ordering: .relaxed)
+        devices.listChanged()
+        #expect(waitUntil { ap.status == .waitingForDevice })
+        #expect(ap.restarts.isEmpty)
+        _ = r.status(at: at(0))
+        #expect(waitUntil { devices[backupDevice]?.status == .running })
+        #expect(r.status(at: at(0)).backup == .recording)
+        ap.present.store(true, ordering: .relaxed)
+        devices.listChanged()
+        #expect(waitUntil { ap.status == .running })
+        #expect(ap.restarts.map(\.reason) == ["device returned"])
+        _ = r.status(at: at(1))
+        #expect(r.status(at: at(4)).backup == .off)
+        #expect(waitUntil { devices[backupDevice]?.status == .stopped })
+        _ = r.stop()
+    }
+
     @Test func aBackupThatFailsAfterItRanIsNotReportedAsRecordingWhileItRetries() throws {
         let devices = Devices()
         let r = try deviceRecorder(devices)
