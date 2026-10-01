@@ -12,10 +12,11 @@ another microphone until it comes back.
 
 | Topic | Decision |
 |---|---|
-| Setting | "Backup mic:" picker in the RECORDING section: None or one input device (not "Dabber Mic"). It also works while recording (see "Change while recording"). Enabled (recorded) microphones carry a "(recorded)" suffix, since such a choice disables the backup for that session; while recording, so does the default microphone recorded as the fallback |
+| Setting | "Backup mic:" picker in the RECORDING section: None or one input device (not "Dabber Mic"). It also works while recording (see "Change while recording"). Recorded microphones are not listed: enabled ones, and while recording also the default microphone recorded as the fallback, since such a choice would disable the backup for that session. If the saved backup becomes a recorded microphone, the picker shows None (`RecorderModel.backupSelection`); the setting stays and shows again once that microphone is no longer recorded |
 | Default | On first launch the Mac's built-in microphone (CoreAudio transport type built-in), None if there is none. The default is not saved until the user picks something, so it is found again at every launch until then |
 | Saved | UserDefaults key `backupMic`: the UID, or an empty string for None. Its name is kept with the source names, for the menu while the device is absent |
 | Trigger | While recording, some recorded microphone (not Mac audio) is waiting for its device or has failed, and it has run in this session (was running at a status poll or has a segment). A microphone absent at Record, including the case with the fallback to the default microphone, does not trigger the backup until it has run |
+| Presence | A microphone is present only if a device with its UID is in the system device list (`kAudioHardwarePropertyDevices`) and has input streams, as in the menu (`inputDeviceIsPresent`); `InputDeviceSource` opens the device found in that list. AirPods put in the case leave the list at once, but their UID still translates to the old device object and `DeviceIsAlive` comes about 15 s later or never. So a change of the device list stops the source at once, it waits for the device, and the backup starts on the next poll |
 | Not a trigger | Mac audio in any state; a microphone that is restarting (a short, normal state) |
 | Back to normal | Every recorded microphone has been running continuously for 2.5 s (`BackupPolicy.settleSeconds`, measured with the `now` passed to `status(at:)`): the backup pauses. The next loss resumes it |
 | Restarting or stopped (sleep) microphones | Keep the backup as it is: on stays on, off stays off |
@@ -59,12 +60,12 @@ another microphone until it comes back.
 - `SessionRecorder`: activation, settle time, absent-at-start microphones, pause, resume, naming, manifest, missing
   device, slow presence check, sleep and wake (also during a start), stop, a backup that never recorded, a change of
   the backup while it is off, while it records, during its start, back to a former backup, to None and to a recorded
-  microphone, stop and wake with two backup sources. Tested with
+  microphone, stop and wake with two backup sources, a microphone that leaves the device list without `DeviceIsAlive`. Tested with
   fake sources; the pause and resume path and the retry of a failed start are also tested through `CaptureSource`
   with fake device hooks.
 - `Finalizer`: a track that starts late and has a gap is placed on the timeline; one or two backup tracks do not lower
   the mix level. Tested.
-- `RecorderModel`: setting, first-launch default, persistence, the change while recording, the "(recorded)" marks, the spec passed to the
+- `RecorderModel`: setting, first-launch default, persistence, the change while recording, recorded microphones left out of the picker, the spec passed to the
   engine, warnings (also for a microphone that was absent at Record, came back and was lost again). Tested with a
   fake engine.
 - `InputDevice.builtIn` (transport type) and the picker in the menu: hardware check only.
