@@ -61,7 +61,7 @@ public struct FeedHooks: Sendable {
     }
 
     public static let live = FeedHooks(
-        micPresent: { ((try? deviceID(uid: $0)) ?? kAudioObjectUnknown) != kAudioObjectUnknown },
+        micPresent: { inputDeviceIsPresent(uid: $0) },
         micDevice: {
             let id = (try? deviceID(uid: FeedDevices.micUID)) ?? kAudioObjectUnknown
             return id == kAudioObjectUnknown ? nil : id

@@ -59,8 +59,8 @@ One Swift package, two targets.
     `kAudioDevicePropertyDeviceIsAlive`, `kAudioDevicePropertyDeviceHasChanged`,
     `kAudioDevicePropertyIOStoppedAbnormally`, `kAudioStreamPropertyVirtualFormat` on input streams,
     `kAudioHardwarePropertyServiceRestarted`. Any event: stop, close the segment, re-read the format, restart,
-    open a new segment. A device that disappears is found again by UID (`kAudioHardwarePropertyTranslateUIDToDevice`)
-    when `kAudioHardwarePropertyDevices` changes. Stream format is never cached across restarts.
+    open a new segment. A device that disappears is found again by UID in the system device list (`kAudioHardwarePropertyDevices`)
+    when that list changes. Stream format is never cached across restarts.
   - `RingBuffer`: lock-free single producer / single consumer. The IOProc only copies into it and counts overruns.
   - `TrackWriter`: writer thread. Drains the ring buffer, converts to 48 kHz float32 with `AVAudioConverter`
     (one converter per segment), writes CAF via `ExtAudioFile`. CAF stays readable if the app dies.

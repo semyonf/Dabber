@@ -58,10 +58,12 @@ public func deviceID(uid: String) throws -> AudioObjectID {
     return id
 }
 
-// Presence follows the system device list, as the menu does. AirPods put in the case leave the list
-// at once, yet their UID still translates to the old object and DeviceIsAlive comes late or never.
+// Presence follows the system device list. AirPods put in the case leave the list at once, yet their
+// UID still translates to the old object and DeviceIsAlive comes late or never. Input streams are not
+// required here: a listed device without them is opened, fails with noInputStream and is retried,
+// instead of waiting for a device list change that may never come.
 public func inputDeviceIsPresent(uid: String) -> Bool {
-    (try? inputDevices())?.contains { $0.uid == uid } ?? false
+    (try? listedDeviceID(uid: uid)) != nil
 }
 
 func listedDeviceID(uid: String) throws -> AudioObjectID? {
