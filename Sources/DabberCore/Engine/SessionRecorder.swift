@@ -44,6 +44,7 @@ public struct RecorderStatus: Sendable, Equatable {
 public final class SessionRecorder: @unchecked Sendable {
     private struct Backup {
         var spec: SourceSpec?
+        var recorded: Set<String> = []
         var made: [String: CaptureSource] = [:]
         var started: Set<String> = []
         var on = false
@@ -55,6 +56,7 @@ public final class SessionRecorder: @unchecked Sendable {
 
         var source: CaptureSource? { spec?.uid.flatMap { made[$0] } }
         var isStarted: Bool { spec?.uid.map(started.contains) ?? false }
+        func usable(_ spec: SourceSpec?) -> SourceSpec? { spec.flatMap { s in s.uid.flatMap { recorded.contains($0) ? nil : s } } }
         func owns(_ source: CaptureSource) -> Bool { made.values.contains { $0 === source } }
         func startedSource(_ uid: String?) -> CaptureSource? { uid.flatMap { started.contains($0) ? made[$0] : nil } }
     }
@@ -146,7 +148,8 @@ public final class SessionRecorder: @unchecked Sendable {
         diskWarning = nil
         self.slides = slides
         let recorded = Set(specs.compactMap(\.uid))
-        self.backup = Backup(spec: backup.flatMap { b in b.uid.flatMap { recorded.contains($0) ? nil : b } })
+        self.backup = Backup(recorded: recorded)
+        self.backup.spec = self.backup.usable(backup)
         ran = Set(created.filter { $0.spec.kind == .mic && $0.status == .running }.map(ObjectIdentifier.init))
         sleeping = false
         _ = state.start()
@@ -313,6 +316,7 @@ public final class SessionRecorder: @unchecked Sendable {
 
     public func setBackup(_ spec: SourceSpec?) {
         lock.withLock {
+            let spec = backup.usable(spec)
             guard state.phase == .recording, spec?.uid != backup.spec?.uid else { return }
             if backup.on {
                 backup.on = false
@@ -411,7 +415,7 @@ public final class SessionRecorder: @unchecked Sendable {
 
     private func forEachSource(_ body: (CaptureSource) -> Void) {
         lock.lock()
-        let sources = self.sources.filter { $0 !== backup.source }
+        let sources = self.sources.filter { !backup.owns($0) }
         lock.unlock()
         for source in sources { body(source) }
     }

@@ -332,6 +332,78 @@ private func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }
         #expect(m.sources.map(\.backup) == [nil, nil, true, true])
         _ = r.stop()
     }
+
+    @Test func switchingBackToAFormerBackupResumesItsTrack() throws {
+        let calls = Calls()
+        let r = try recorder(calls)
+        let dir = try activeBackup(r, calls)
+        r.setBackup(usb)
+        _ = r.status(at: at(1))
+        #expect(waitUntil { calls.all.contains("started \(usbBase)") })
+        r.setBackup(builtIn)
+        _ = r.status(at: at(2))
+        #expect(waitUntil { calls.backupCalls.last == "resume \(backupBase) backup" })
+        #expect(calls.backupCalls.suffix(2) == ["pause \(usbBase)", "resume \(backupBase) backup"])
+        #expect(calls.all.filter { $0 == "start \(backupBase)" }.count == 1)
+        #expect(r.status(at: at(2)).backup == .recording)
+        _ = r.stop()
+        #expect(try SessionManifest.load(from: dir).sources.map(\.file)
+            == ["computer audio.m4a", "mic - AirPods.m4a", backupBase + ".m4a", usbBase + ".m4a"])
+    }
+
+    @Test func noBackupChosenWhileActivePausesTheBackup() throws {
+        let calls = Calls()
+        let r = try recorder(calls)
+        _ = try activeBackup(r, calls)
+        r.setBackup(nil)
+        #expect(r.status(at: at(1)).backup == .off)
+        #expect(waitUntil { calls.backupCalls.last == "pause \(backupBase)" })
+        #expect(r.status(at: at(5)).backup == .off)
+        _ = r.stop()
+        #expect(calls.backupCalls == ["start \(backupBase)", "started \(backupBase)", "pause \(backupBase)", "stop \(backupBase)"])
+    }
+
+    @Test func aRecordedMicChosenAsBackupTurnsTheBackupOff() throws {
+        let calls = Calls()
+        let r = try recorder(calls)
+        _ = try activeBackup(r, calls, specs: [mac, airpods, usb])
+        r.setBackup(usb)
+        #expect(r.status(at: at(1)).backup == .off)
+        #expect(waitUntil { calls.backupCalls.last == "pause \(backupBase)" })
+        #expect(r.status(at: at(5)).backup == .off)
+        _ = r.stop()
+        #expect(calls[usbBase] == nil)
+    }
+
+    @Test func stopStopsEveryBackupTrack() throws {
+        let calls = Calls()
+        let r = try recorder(calls)
+        let dir = try activeBackup(r, calls)
+        r.setBackup(usb)
+        _ = r.status(at: at(1))
+        #expect(waitUntil { calls.all.contains("started \(usbBase)") })
+        _ = r.stop()
+        #expect(calls.all.contains("stop \(backupBase)"))
+        #expect(calls.all.contains("stop \(usbBase)"))
+        let m = try SessionManifest.load(from: dir)
+        #expect(m.sources.suffix(2).map(\.segments.count) == [1, 1])
+    }
+
+    @Test func sleepAndWakeLeaveAFormerBackupPaused() throws {
+        let calls = Calls()
+        let r = try recorder(calls)
+        _ = try activeBackup(r, calls)
+        r.setBackup(usb)
+        _ = r.status(at: at(1))
+        #expect(waitUntil { calls.all.contains("started \(usbBase)") })
+        r.willSleep()
+        #expect(waitUntil { calls.backupCalls.last == "pause \(usbBase)" })
+        r.didWake()
+        #expect(waitUntil { calls.backupCalls.last == "resume \(usbBase) wake" })
+        #expect(!calls.all.contains { $0.hasPrefix("resume \(backupBase)") })
+        #expect(calls[backupBase]?.status == .stopped)
+        _ = r.stop()
+    }
 }
 
 private func activeBackup(_ r: SessionRecorder, _ calls: Calls, specs: [SourceSpec] = [mac, airpods]) throws -> URL {
