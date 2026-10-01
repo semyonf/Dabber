@@ -57,24 +57,24 @@ private func makeSource(_ probe: Probe) throws -> FakeDeviceSource {
     return source
 }
 
-@Test func deviceMissingRestartResumesWhenTheSystemReportsTheUIDBack() throws {
+@Test func deviceMissingRestartResumesWhenTheSystemReportsTheUIDBack() async throws {
     let probe = Probe()
     let source = try makeSource(probe)
     try source.start()
     #expect(source.status == .running)
     source.present.store(false, ordering: .relaxed)
     probe.fire(42, kAudioDevicePropertyDeviceIsAlive)
-    #expect(waitUntil { source.status == .waitingForDevice })
+    #expect(await eventually { source.status == .waitingForDevice })
     #expect(!probe.running)
     source.present.store(true, ordering: .relaxed)
     probe.fire(systemObject, kAudioHardwarePropertyDevices)
-    #expect(waitUntil { source.status == .running })
+    #expect(await eventually { source.status == .running })
     #expect(probe.starts == 2)
     #expect(source.restarts.map(\.reason) == ["livn", "device returned"])
     source.stop()
 }
 
-@Test func startWithTheDeviceMissingWaitsThenRecordsWhenItAppears() throws {
+@Test func startWithTheDeviceMissingWaitsThenRecordsWhenItAppears() async throws {
     let probe = Probe()
     let source = try makeSource(probe)
     source.present.store(false, ordering: .relaxed)
@@ -83,26 +83,26 @@ private func makeSource(_ probe: Probe) throws -> FakeDeviceSource {
     #expect(!probe.running)
     source.present.store(true, ordering: .relaxed)
     probe.fire(systemObject, kAudioHardwarePropertyDevices)
-    #expect(waitUntil { source.status == .running })
+    #expect(await eventually { source.status == .running })
     #expect(probe.starts == 1)
     #expect(source.writer.segments.map(\.reason) == ["restart: device returned"])
     source.stop()
     #expect(source.status == .stopped)
 }
 
-@Test func wakeWhileWaitingKeepsWaiting() throws {
+@Test func wakeWhileWaitingKeepsWaiting() async throws {
     let probe = Probe()
     let source = try makeSource(probe)
     source.present.store(false, ordering: .relaxed)
     try source.start()
     source.pause()
     source.resume()
-    #expect(waitUntil { source.status == .waitingForDevice })
+    #expect(await eventually { source.status == .waitingForDevice })
     #expect(source.restarts.isEmpty)
     source.stop()
 }
 
-@Test func aStartErrorOnWakeIsRetried() throws {
+@Test func aStartErrorOnWakeIsRetried() async throws {
     let probe = Probe()
     let source = try makeSource(probe)
     source.retryDelay = 0.2
@@ -111,30 +111,30 @@ private func makeSource(_ probe: Probe) throws -> FakeDeviceSource {
     #expect(!probe.running)
     source.streamlessOpens.store(1, ordering: .relaxed)
     source.resume()
-    #expect(waitUntil { source.status == .running })
+    #expect(await eventually { source.status == .running })
     #expect(probe.starts == 2)
     #expect(source.restarts.map(\.reason) == ["wake", "wake"])
     source.stop()
 }
 
-@Test func aSecondWakeDuringARetryStartsCaptureOnce() throws {
+@Test func aSecondWakeDuringARetryStartsCaptureOnce() async throws {
     let probe = Probe()
     let source = try makeSource(probe)
-    source.retryDelay = 0.3
+    source.retryDelay = 1
     try source.start()
     source.pause()
     source.streamlessOpens.store(1, ordering: .relaxed)
     source.resume()
-    #expect(waitUntil { if case .restarting = source.status { true } else { false } })
+    #expect(await eventually { if case .restarting = source.status { true } else { false } })
     source.resume()
-    #expect(waitUntil { source.status == .running })
-    Thread.sleep(forTimeInterval: 0.5)
+    #expect(await eventually { source.status == .running })
+    try? await Task.sleep(for: .seconds(1.2))
     #expect(probe.starts == 2)
     source.stop()
     #expect(!probe.running)
 }
 
-@Test func deviceThatAppearsBeforeItsInputStreamIsRetried() throws {
+@Test func deviceThatAppearsBeforeItsInputStreamIsRetried() async throws {
     let probe = Probe()
     let source = try makeSource(probe)
     source.retryDelay = 0.2
@@ -143,50 +143,52 @@ private func makeSource(_ probe: Probe) throws -> FakeDeviceSource {
     source.streamlessOpens.store(1, ordering: .relaxed)
     source.present.store(true, ordering: .relaxed)
     probe.fire(systemObject, kAudioHardwarePropertyDevices)
-    #expect(waitUntil { source.status == .running })
+    #expect(await eventually { source.status == .running })
     #expect(probe.starts == 1)
     source.stop()
 }
 
-@Test func triggerStopsIOAtOnceAndReopensOnlyAfterTheDebounce() throws {
+@Test func triggerStopsIOAtOnceAndReopensOnlyAfterTheDebounce() async throws {
     let probe = Probe()
     let source = try makeSource(probe)
+    source.restartDelay = 1
     try source.start()
     let fired = Date()
     probe.fire(42, kAudioDevicePropertyDeviceHasChanged)
-    #expect(waitUntil { !probe.running })
+    #expect(await eventually { !probe.running })
     #expect(source.status == .restarting("diff"))
     #expect(probe.starts == 1)
-    #expect(waitUntil { source.status == .running })
-    #expect(Date().timeIntervalSince(fired) >= 0.2)
+    #expect(await eventually { source.status == .running })
+    #expect(Date().timeIntervalSince(fired) >= 1)
     #expect(probe.starts == 2)
     #expect(source.writer.segments.map(\.reason) == ["start", "restart: diff"])
     source.stop()
 }
 
 @Test(arguments: [(AudioObjectID(42), kAudioDevicePropertyNominalSampleRate), (AudioObjectID(43), kAudioStreamPropertyVirtualFormat)])
-func formatChangeReopensAfterAShortDelay(object: AudioObjectID, selector: AudioObjectPropertySelector) throws {
+func formatChangeReopensAfterAShortDelay(object: AudioObjectID, selector: AudioObjectPropertySelector) async throws {
+    let probe = Probe()
+    let source = try makeSource(probe)
+    source.restartDelay = 2
+    try source.start()
+    let fired = Date()
+    probe.fire(object, selector)
+    #expect(await eventually { probe.starts == 2 && source.status == .running })
+    let elapsed = Date().timeIntervalSince(fired)
+    #expect(elapsed >= 0.1)
+    #expect(elapsed < 1)
+    source.stop()
+}
+
+@Test func stopDuringAPendingRestartLeavesTheSourceStopped() async throws {
     let probe = Probe()
     let source = try makeSource(probe)
     source.restartDelay = 1
     try source.start()
-    let fired = Date()
-    probe.fire(object, selector)
-    #expect(waitUntil { probe.starts == 2 && source.status == .running })
-    let elapsed = Date().timeIntervalSince(fired)
-    #expect(elapsed >= 0.1)
-    #expect(elapsed < 0.5)
-    source.stop()
-}
-
-@Test func stopDuringAPendingRestartLeavesTheSourceStopped() throws {
-    let probe = Probe()
-    let source = try makeSource(probe)
-    try source.start()
     probe.fire(42, kAudioDevicePropertyDeviceHasChanged)
-    #expect(waitUntil { source.status == .restarting("diff") })
+    #expect(await eventually { source.status == .restarting("diff") })
     source.stop()
-    Thread.sleep(forTimeInterval: 0.4)
+    try? await Task.sleep(for: .seconds(1.2))
     #expect(source.status == .stopped)
     #expect(probe.starts == 1)
     #expect(!probe.running)

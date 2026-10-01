@@ -84,7 +84,7 @@ private func ticking() -> @Sendable () -> UInt64 {
 
 @Test func aFailedGrabIsReportedAndTheNextSuccessClearsIt() async {
     let grabber = FakeGrabber([.failure(GrabFailed()), .failure(GrabFailed()), .success(ScreenGrab(image: screen(), display: 1))])
-    let slides = SlideRecorder(grabber: grabber, interval: .milliseconds(20))
+    let slides = SlideRecorder(grabber: grabber, interval: .milliseconds(500))
     let store = Store()
     slides.start { store.add($0, $1) }
     #expect(await eventually { slides.status == .failed("grab failed") })

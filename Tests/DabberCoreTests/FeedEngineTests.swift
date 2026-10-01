@@ -102,7 +102,7 @@ private func makeEngine(_ probe: FeedProbe) -> FeedEngine {
     engine.applyAndWait(nil)
 }
 
-@Test func absentMicFeedsComputerAudioThenAddsTheMicWhenItConnects() {
+@Test func absentMicFeedsComputerAudioThenAddsTheMicWhenItConnects() async {
     let probe = FeedProbe()
     probe.micPresent.store(false, ordering: .relaxed)
     let engine = makeEngine(probe)
@@ -111,24 +111,24 @@ private func makeEngine(_ probe: FeedProbe) -> FeedEngine {
     #expect(probe.openedWithMic == [false])
     probe.micPresent.store(true, ordering: .relaxed)
     probe.fire(systemObject, kAudioHardwarePropertyDevices)
-    #expect(waitUntil { engine.status == .running })
+    #expect(await eventually { engine.status == .running })
     #expect(probe.openedWithMic == [false, true])
     engine.applyAndWait(nil)
 }
 
-@Test func micThatDisappearsLeavesComputerAudioRunning() {
+@Test func micThatDisappearsLeavesComputerAudioRunning() async {
     let probe = FeedProbe()
     let engine = makeEngine(probe)
     engine.applyAndWait(withMic)
     probe.micPresent.store(false, ordering: .relaxed)
     probe.fire(systemObject, kAudioHardwarePropertyDevices)
-    #expect(waitUntil { engine.status == .micMissing })
+    #expect(await eventually { engine.status == .micMissing })
     #expect(probe.openedWithMic == [true, false])
     #expect(probe.running)
     engine.applyAndWait(nil)
 }
 
-@Test func missingDriverIsReportedAndPickedUpOnceInstalled() {
+@Test func missingDriverIsReportedAndPickedUpOnceInstalled() async {
     let probe = FeedProbe()
     probe.driverPresent.store(false, ordering: .relaxed)
     let engine = makeEngine(probe)
@@ -137,75 +137,78 @@ private func makeEngine(_ probe: FeedProbe) -> FeedEngine {
     #expect(!probe.running)
     probe.driverPresent.store(true, ordering: .relaxed)
     probe.fire(systemObject, kAudioHardwarePropertyDevices)
-    #expect(waitUntil { engine.status == .running })
+    #expect(await eventually { engine.status == .running })
     engine.applyAndWait(nil)
 }
 
-@Test func deviceTriggerRebuildsTheAggregate() {
+@Test func deviceTriggerRebuildsTheAggregate() async {
     let probe = FeedProbe()
     let engine = makeEngine(probe)
+    engine.restartDelay = 1
     engine.applyAndWait(withMic)
     probe.fire(77, kAudioDevicePropertyNominalSampleRate)
-    #expect(waitUntil { engine.status == .restarting("nsrt") })
-    #expect(waitUntil { engine.status == .running })
+    #expect(await eventually { engine.status == .restarting("nsrt") })
+    #expect(await eventually { engine.status == .running })
     #expect(probe.openedWithMic == [true, true])
     engine.applyAndWait(nil)
 }
 
-@Test func serviceRestartRebuildsTheAggregate() {
+@Test func serviceRestartRebuildsTheAggregate() async {
     let probe = FeedProbe()
     let engine = makeEngine(probe)
     engine.applyAndWait(withMic)
     probe.fire(systemObject, kAudioHardwarePropertyServiceRestarted)
-    #expect(waitUntil { probe.openedWithMic.count == 2 && engine.status == .running })
+    #expect(await eventually { probe.openedWithMic.count == 2 && engine.status == .running })
     engine.applyAndWait(nil)
 }
 
-@Test func openFailuresAreRetriedThenReported() {
+@Test func openFailuresAreRetriedThenReported() async {
     let probe = FeedProbe()
     probe.failingOpens.store(3, ordering: .relaxed)
     let engine = makeEngine(probe)
     engine.applyAndWait(withMic)
-    #expect(waitUntil {
+    #expect(await eventually {
         if case .failed = engine.status { return true }
         return false
     })
     #expect(probe.openedWithMic.isEmpty)
     probe.fire(systemObject, kAudioHardwarePropertyDevices)
-    #expect(waitUntil { engine.status == .running })
+    #expect(await eventually { engine.status == .running })
     engine.applyAndWait(nil)
 }
 
-@Test func turningOffDuringAPendingRestartStaysOff() {
+@Test func turningOffDuringAPendingRestartStaysOff() async {
     let probe = FeedProbe()
     let engine = makeEngine(probe)
+    engine.restartDelay = 1
     engine.applyAndWait(withMic)
     probe.fire(77, kAudioDevicePropertyNominalSampleRate)
-    #expect(waitUntil { engine.status == .restarting("nsrt") })
+    #expect(await eventually { engine.status == .restarting("nsrt") })
     engine.applyAndWait(nil)
-    Thread.sleep(forTimeInterval: 0.3)
+    try? await Task.sleep(for: .seconds(1.2))
     #expect(engine.status == .off)
     #expect(probe.openedWithMic == [true])
     #expect(!probe.running)
 }
 
-@Test func micFormatChangeKeepsTheFeedRunningButMicDeathRebuildsIt() {
+@Test func micFormatChangeKeepsTheFeedRunningButMicDeathRebuildsIt() async {
     let probe = FeedProbe(watched: FeedAggregate.watchList(aggregate: 77, tap: 88, mic: 99))
     let engine = makeEngine(probe)
+    engine.restartDelay = 1
     engine.applyAndWait(withMic)
     probe.fire(99, kAudioDevicePropertyNominalSampleRate)
     probe.fire(99, kAudioStreamPropertyVirtualFormat)
-    Thread.sleep(forTimeInterval: 0.3)
+    try? await Task.sleep(for: .seconds(0.3))
     #expect(engine.status == .running)
     #expect(probe.openedWithMic == [true])
     probe.fire(99, kAudioDevicePropertyDeviceIsAlive)
-    #expect(waitUntil { engine.status == .restarting("livn") })
-    #expect(waitUntil { engine.status == .running })
+    #expect(await eventually { engine.status == .restarting("livn") })
+    #expect(await eventually { engine.status == .running })
     #expect(probe.openedWithMic == [true, true])
     engine.applyAndWait(nil)
 }
 
-@Test func feedWaitsForAnAppToUseDabberMic() {
+@Test func feedWaitsForAnAppToUseDabberMic() async {
     let probe = FeedProbe()
     probe.inUse.store(false, ordering: .relaxed)
     let engine = makeEngine(probe)
@@ -215,63 +218,65 @@ private func makeEngine(_ probe: FeedProbe) -> FeedEngine {
     #expect(!probe.running)
     probe.inUse.store(true, ordering: .relaxed)
     probe.fire(dabberMicID, kAudioDevicePropertyDeviceIsRunningSomewhere)
-    #expect(waitUntil { engine.status == .running })
+    #expect(await eventually { engine.status == .running })
     #expect(probe.openedWithMic == [true])
     #expect(probe.running)
     engine.applyAndWait(nil)
 }
 
-@Test func feedStopsOnceNobodyUsesDabberMicForTheDelay() {
+@Test func feedStopsOnceNobodyUsesDabberMicForTheDelay() async {
     let probe = FeedProbe()
     let engine = makeEngine(probe)
+    engine.idleDelay = 1
     engine.applyAndWait(withMic)
     #expect(engine.status == .running)
     probe.inUse.store(false, ordering: .relaxed)
     probe.fire(dabberMicID, kAudioDevicePropertyDeviceIsRunningSomewhere)
-    Thread.sleep(forTimeInterval: 0.05)
+    try? await Task.sleep(for: .seconds(0.05))
     #expect(engine.status == .running)
-    #expect(waitUntil { engine.status == .idle })
+    #expect(await eventually { engine.status == .idle })
     #expect(!probe.running)
     #expect(probe.closes.load(ordering: .relaxed) == 1)
     engine.applyAndWait(nil)
     #expect(engine.status == .off)
 }
 
-@Test func briefGapInDabberMicUseKeepsTheFeedOpen() {
+@Test func briefGapInDabberMicUseKeepsTheFeedOpen() async {
     let probe = FeedProbe()
     let engine = makeEngine(probe)
+    engine.idleDelay = 1
     engine.applyAndWait(withMic)
     probe.inUse.store(false, ordering: .relaxed)
     probe.fire(dabberMicID, kAudioDevicePropertyDeviceIsRunningSomewhere)
-    Thread.sleep(forTimeInterval: 0.05)
+    try? await Task.sleep(for: .seconds(0.05))
     probe.inUse.store(true, ordering: .relaxed)
     probe.fire(dabberMicID, kAudioDevicePropertyDeviceIsRunningSomewhere)
-    Thread.sleep(forTimeInterval: 0.4)
+    try? await Task.sleep(for: .seconds(1.2))
     #expect(engine.status == .running)
     #expect(probe.openedWithMic == [true])
     #expect(probe.closes.load(ordering: .relaxed) == 0)
     engine.applyAndWait(nil)
 }
 
-@Test func restartWhileNobodyUsesDabberMicLeavesTheFeedIdle() {
+@Test func restartWhileNobodyUsesDabberMicLeavesTheFeedIdle() async {
     let probe = FeedProbe()
     let engine = makeEngine(probe)
     engine.applyAndWait(withMic)
     probe.inUse.store(false, ordering: .relaxed)
     probe.fire(77, kAudioDevicePropertyNominalSampleRate)
-    #expect(waitUntil { engine.status == .idle })
+    #expect(await eventually { engine.status == .idle })
     #expect(probe.openedWithMic == [true])
     #expect(!probe.running)
     engine.applyAndWait(nil)
 }
 
-@Test func serviceRestartReregistersTheDabberMicListener() {
+@Test func serviceRestartReregistersTheDabberMicListener() async {
     let probe = FeedProbe()
     let engine = makeEngine(probe)
     engine.applyAndWait(withMic)
     #expect(probe.demandWatches.load(ordering: .relaxed) == 1)
     probe.fire(systemObject, kAudioHardwarePropertyServiceRestarted)
-    #expect(waitUntil { probe.openedWithMic.count == 2 && engine.status == .running })
+    #expect(await eventually { probe.openedWithMic.count == 2 && engine.status == .running })
     #expect(probe.demandWatches.load(ordering: .relaxed) == 2)
     engine.applyAndWait(nil)
 }
