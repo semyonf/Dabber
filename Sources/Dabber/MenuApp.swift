@@ -89,7 +89,7 @@ struct RecordingSection: View {
                     if row.showsLevel { LevelBar(db: row.levelDb, warn: row.silent) }
                 }
             }
-            Picker("Backup mic:", selection: Binding(get: { model.backupUID ?? "" }, set: { model.setBackup($0.isEmpty ? nil : $0) })) {
+            Picker("Backup mic:", selection: Binding(get: { model.backupSelection ?? "" }, set: { model.setBackup($0.isEmpty ? nil : $0) })) {
                 Text("None").tag("")
                 ForEach(model.backupChoices) { choice in Text(choice.title).tag(choice.id) }
             }

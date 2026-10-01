@@ -1136,8 +1136,8 @@ private func backupModel(
     let dabberMic = InputDevice(id: 9, uid: FeedDevices.micUID, name: "Dabber Mic")
     let m = backupModel(e, devices: [airpods, usb, builtInMic, dabberMic], savedBackup: saved)
     #expect(m.backupUID == "bi")
-    #expect(m.backupChoices.map(\.id) == ["ap", "usb", "bi"])
-    #expect(m.backupChoices.map(\.title) == ["AirPods (recorded)", "USB", "MacBook Air Microphone"])
+    #expect(m.backupChoices.map(\.id) == ["usb", "bi"])
+    #expect(m.backupChoices.map(\.title) == ["USB", "MacBook Air Microphone"])
     m.setBackup("usb")
     #expect(m.backupUID == "usb")
     #expect(saved.values == ["usb"])
@@ -1146,11 +1146,13 @@ private func backupModel(
     #expect(e.backups == [SourceSpec(kind: .mic, uid: "usb", name: "USB")])
     m.setBackup("bi")
     m.setBackup("ap")
+    #expect(m.backupUID == "ap")
+    #expect(m.backupSelection == nil)
     m.setBackup(nil)
     #expect(m.backupUID == nil)
     #expect(saved.values == ["usb", "bi", "ap", nil])
     #expect(e.backupChanges == [SourceSpec(kind: .mic, uid: "bi", name: "MacBook Air Microphone"), nil, nil])
-    #expect(m.backupChoices.map(\.title) == ["AirPods (recorded)", "USB", "MacBook Air Microphone"])
+    #expect(m.backupChoices.map(\.title) == ["USB", "MacBook Air Microphone"])
     await m.startStop()
     m.setBackup("usb")
     #expect(m.backupUID == "usb")
@@ -1178,14 +1180,28 @@ private func backupModel(
     #expect(m.warning == "AirPods: waiting for device — recording USB (backup)")
 }
 
-@MainActor @Test func theFallbackMicIsMarkedRecordedWhileRecording() async {
+@MainActor @Test func theFallbackMicIsLeftOutOfTheBackupListWhileRecording() async {
     let e = FakeEngine()
-    let m = backupModel(e, enabled: ["computer"], defaultUID: "usb")
+    let m = backupModel(e, enabled: ["computer"], backup: "usb", defaultUID: "usb")
     #expect(m.backupChoices.map(\.title) == ["AirPods", "USB", "MacBook Air Microphone"])
+    #expect(m.backupSelection == "usb")
     await m.startStop()
-    #expect(m.backupChoices.map(\.title) == ["AirPods", "USB (recorded)", "MacBook Air Microphone"])
+    #expect(m.backupChoices.map(\.title) == ["AirPods", "MacBook Air Microphone"])
+    #expect(m.backupSelection == nil)
     await m.startStop()
     #expect(m.backupChoices.map(\.title) == ["AirPods", "USB", "MacBook Air Microphone"])
+    #expect(m.backupSelection == "usb")
+}
+
+@MainActor @Test func aBackupMicThatIsTurnedOnForRecordingLeavesTheListAndKeepsTheSetting() {
+    let m = backupModel(FakeEngine())
+    m.toggle("bi")
+    #expect(m.backupChoices.map(\.id) == ["usb"])
+    #expect(m.backupUID == "bi")
+    #expect(m.backupSelection == nil)
+    m.toggle("bi")
+    #expect(m.backupChoices.map(\.id) == ["usb", "bi"])
+    #expect(m.backupSelection == "bi")
 }
 
 @MainActor @Test func warningsNameTheBackupChosenWhileRecording() async {

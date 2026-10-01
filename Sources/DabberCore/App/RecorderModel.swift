@@ -219,15 +219,21 @@ public final class RecorderModel {
     }
 
     public var backupChoices: [BackupChoice] {
-        let recorded = Set(sessionMics.compactMap(\.uid))
-        var choices = rows.filter { $0.id != Self.computerID }.map {
-            BackupChoice(id: $0.id, title: $0.title + ($0.enabled || recorded.contains($0.id) ? " (recorded)" : ""))
+        let recorded = recordedMics
+        var choices = rows.filter { $0.id != Self.computerID && !recorded.contains($0.id) }.map {
+            BackupChoice(id: $0.id, title: $0.title)
         }
-        if let uid = backupUID, !choices.contains(where: { $0.id == uid }) {
+        if let uid = backupSelection, !choices.contains(where: { $0.id == uid }) {
             choices.append(BackupChoice(id: uid, title: "\(names[uid] ?? uid) (not connected)"))
         }
         return choices
     }
+
+    // A recorded mic is not listed, so the picker shows None while the chosen backup is recorded.
+    // The setting stays and shows again once that mic is no longer recorded.
+    public var backupSelection: String? { backupUID.flatMap { recordedMics.contains($0) ? nil : $0 } }
+
+    private var recordedMics: Set<String> { Set(rows.filter(\.enabled).map(\.id) + sessionMics.compactMap(\.uid)) }
 
     public func setBackup(_ uid: String?) {
         backupUID = uid
