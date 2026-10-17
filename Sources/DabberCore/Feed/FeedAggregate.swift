@@ -19,20 +19,19 @@ public final class FeedAggregate: Sendable {
 
     public init(micUID: String?, tapExcluding bundleIDs: [String]?) throws {
         guard try deviceID(uid: FeedDevices.feedUID) != kAudioObjectUnknown else { throw FeedError.driverMissing }
-        var subDevices: [[String: Any]] = [[kAudioSubDeviceUIDKey: FeedDevices.feedUID]]
         var mic: AudioObjectID?
         if let micUID {
             let id = try deviceID(uid: micUID)
             guard id != kAudioObjectUnknown else { throw SourceError.deviceMissing(micUID) }
             mic = id
-            subDevices.append([kAudioSubDeviceUIDKey: micUID, kAudioSubDeviceDriftCompensationKey: 1])
         }
+        // The mic stays out of the aggregate and is read by MicSideChain on its own clock.
         var config: [String: Any] = [
             kAudioAggregateDeviceUIDKey: "local.dabber.feed.\(UUID().uuidString)",
             kAudioAggregateDeviceNameKey: "Dabber Feed Mix",
             kAudioAggregateDeviceIsPrivateKey: 1,
             kAudioAggregateDeviceMainSubDeviceKey: FeedDevices.feedUID,
-            kAudioAggregateDeviceSubDeviceListKey: subDevices,
+            kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: FeedDevices.feedUID]],
         ]
         var tap: AudioObjectID?
         if let bundleIDs {
@@ -62,7 +61,7 @@ public final class FeedAggregate: Sendable {
     static func watchList(aggregate: AudioObjectID, tap: AudioObjectID?, mic: AudioObjectID?) -> [(AudioObjectID, WatchedObject)] {
         var list: [(AudioObjectID, WatchedObject)] = [(aggregate, .device)]
         if let tap { list.append((tap, .tap)) }
-        if let mic { list.append((mic, .subDevice)) }
+        if let mic { list.append((mic, .device)) }
         return list
     }
 

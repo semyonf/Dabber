@@ -10,8 +10,11 @@ public final class FeedRenderer: @unchecked Sendable {
     private let unexpectedLayoutCount = Atomic<Int>(0)
     private let skippedInputCount = Atomic<Int>(0)
     private var nextSampleTime = -1.0
+    private let mic: FeedMicInput?
 
-    public init() {}
+    public init(mic: FeedMicInput? = nil) {
+        self.mic = mic
+    }
 
     public var cycles: Int { cycleCount.load(ordering: .relaxed) }
     public var framesRendered: Int { frameCount.load(ordering: .relaxed) }
@@ -38,7 +41,7 @@ public final class FeedRenderer: @unchecked Sendable {
         let out = UnsafeMutableBufferPointer(start: data.assumingMemoryBound(to: Float.self), count: frames * 2)
         out.update(repeating: 0)
         let inputs = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
-        var sources = 0
+        var sources = mic == nil ? 0 : 1
         for b in inputs where Self.fits(b, frames: frames) { sources += 1 }
         for b in inputs {
             guard Self.fits(b, frames: frames), let src = b.mData else {
@@ -50,6 +53,7 @@ public final class FeedRenderer: @unchecked Sendable {
                 UnsafeBufferPointer(start: src.assumingMemoryBound(to: Float.self), count: frames * channels),
                 channels: channels, gain: 1 / Float(sources), into: out)
         }
+        mic?.add(into: out, frames: frames, gain: 1 / Float(sources))
         FeedMixer.clamp(out)
         meter.update(UnsafePointer(data.assumingMemoryBound(to: Float.self)), count: out.count)
     }

@@ -28,10 +28,15 @@ public struct OpenedFeed: Sendable {
     public let device: AudioObjectID
     public let watched: [(AudioObjectID, WatchedObject)]
     public let close: CaptureHooks.Stop
+    public let mic: FeedMicInput?
 
-    public init(device: AudioObjectID, watched: [(AudioObjectID, WatchedObject)], close: @escaping CaptureHooks.Stop) {
+    public init(
+        device: AudioObjectID, watched: [(AudioObjectID, WatchedObject)], mic: FeedMicInput? = nil,
+        close: @escaping CaptureHooks.Stop
+    ) {
         self.device = device
         self.watched = watched
+        self.mic = mic
         self.close = close
     }
 }
@@ -74,7 +79,32 @@ public struct FeedHooks: Sendable {
             let aggregate = try FeedAggregate(
                 micUID: withMic ? config.micUID : nil,
                 tapExcluding: config.computerAudio ? config.tapBundleIDs : nil)
-            return OpenedFeed(device: aggregate.aggregateID, watched: aggregate.watched) { aggregate.destroy() }
+            let mics: OpenedMics
+            do {
+                let rate = try getValue(
+                    aggregate.aggregateID, address(kAudioDevicePropertyNominalSampleRate), default: Float64(0))
+                let builtIn = config.micUID == nil ? nil : (try? inputDevices())?.first(where: \.builtIn)?.id
+                let chosen = aggregate.micID.map { id in
+                    let transport = try? getValue(id, address(kAudioDevicePropertyTransportType), default: UInt32(0))
+                    return MicCandidate(
+                        id: id,
+                        bluetooth: transport == kAudioDeviceTransportTypeBluetooth
+                            || transport == kAudioDeviceTransportTypeBluetoothLE)
+                }
+                mics = try MicInputs.open(chosen: chosen, builtIn: builtIn, outputRate: rate) { id in
+                    let chain = try MicSideChain(device: id, outputRate: rate)
+                    return (chain.resampler, { chain.stop() })
+                }
+            } catch {
+                aggregate.destroy()
+                throw error
+            }
+            let backups = mics.devices.filter { $0 != aggregate.micID }.map { ($0, WatchedObject.device) }
+            let stopMics = mics.stop
+            return OpenedFeed(device: aggregate.aggregateID, watched: aggregate.watched + backups, mic: mics.input) {
+                stopMics()
+                aggregate.destroy()
+            }
         },
         startIO: { device, renderer in
             let runner = try DuplexIOProcRunner(device: device) { input, output, time in
@@ -166,7 +196,7 @@ public final class FeedEngine: @unchecked Sendable {
             let opened = try hooks.open(config, withMic)
             self.opened = opened
             openedWithMic = withMic
-            let renderer = FeedRenderer()
+            let renderer = FeedRenderer(mic: opened.mic)
             stopIO = try hooks.startIO(opened.device, renderer)
             rendererValue.withLock { $0 = renderer }
             kinds = Dictionary(opened.watched.map { ($0.0, $0.1) }, uniquingKeysWith: { a, _ in a })

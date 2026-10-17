@@ -45,6 +45,7 @@ public final class FeedModel {
     public private(set) var settings: FeedSettings
     public private(set) var micChoices: [MicChoice] = []
     public private(set) var driverInstalled = false
+    private var builtInMicAvailable = false
     public private(set) var excluded: [AppEntry] = []
     public private(set) var candidates: [AppEntry] = []
     public private(set) var status: FeedStatus = .off
@@ -98,7 +99,9 @@ public final class FeedModel {
         case .off: return "Off"
         case .idle: return "Waiting for an app to use Dabber Mic"
         case .running: return "Sending"
-        case .micMissing: return "Microphone missing — sending " + (settings.computerAudio ? "Mac audio only" : "silence")
+        case .micMissing:
+            if builtInMicAvailable { return "Microphone missing — using the built-in mic" }
+            return "Microphone missing — sending " + (settings.computerAudio ? "Mac audio only" : "silence")
         case .restarting: return "Restarting…"
         case .driverMissing: return noDriver
         case .failed(let why): return "Failed: \(why)"
@@ -108,6 +111,7 @@ public final class FeedModel {
     public func refresh() {
         let inputs = (try? catalog.inputs()) ?? []
         driverInstalled = inputs.contains { $0.uid == FeedDevices.micUID }
+        builtInMicAvailable = inputs.contains { $0.builtIn && $0.uid != settings.micUID }
         var choices = inputs.filter { $0.uid != FeedDevices.micUID }.map { MicChoice(id: $0.uid, name: $0.name, connected: true) }
         if let uid = settings.micUID {
             if let live = choices.first(where: { $0.id == uid }), live.name != settings.micName {

@@ -191,20 +191,23 @@ private func makeEngine(_ probe: FeedProbe) -> FeedEngine {
     #expect(!probe.running)
 }
 
-@Test func micFormatChangeKeepsTheFeedRunningButMicDeathRebuildsIt() async {
+@Test func micRateChangeOrDeathRebuildsTheFeed() async {
     let probe = FeedProbe(watched: FeedAggregate.watchList(aggregate: 77, tap: 88, mic: 99))
     let engine = makeEngine(probe)
     engine.restartDelay = 1
     engine.applyAndWait(withMic)
-    probe.fire(99, kAudioDevicePropertyNominalSampleRate)
     probe.fire(99, kAudioStreamPropertyVirtualFormat)
     try? await Task.sleep(for: .seconds(0.3))
     #expect(engine.status == .running)
     #expect(probe.openedWithMic == [true])
+    probe.fire(99, kAudioDevicePropertyNominalSampleRate)
+    #expect(await eventually { engine.status == .restarting("nsrt") })
+    #expect(await eventually { engine.status == .running })
+    #expect(probe.openedWithMic == [true, true])
     probe.fire(99, kAudioDevicePropertyDeviceIsAlive)
     #expect(await eventually { engine.status == .restarting("livn") })
     #expect(await eventually { engine.status == .running })
-    #expect(probe.openedWithMic == [true, true])
+    #expect(probe.openedWithMic == [true, true, true])
     engine.applyAndWait(nil)
 }
 

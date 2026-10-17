@@ -256,3 +256,13 @@ private final class ThreadProbeApps: AppCatalog, @unchecked Sendable {
     #expect(!m.showsLevel)
     #expect(!m.hasProblem)
 }
+
+@MainActor @Test func missingMicStatusNamesTheBuiltInFallbackWhenThereIsOne() {
+    let builtIn = InputDevice(id: 2, uid: "bi", name: "MacBook Pro Microphone", builtIn: true)
+    let feed = FakeFeed()
+    let m = makeModel(feed, devices: [builtIn, dabberMic])
+    m.setOn(true)
+    feed.status = .micMissing
+    m.tick()
+    #expect(m.statusText == "Microphone missing — using the built-in mic")
+}
