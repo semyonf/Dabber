@@ -3,6 +3,7 @@ import Foundation
 
 public struct ScreenGrab: @unchecked Sendable {
     public let image: CGImage
+    /// What was captured (a display or a window): a picture from another source always counts as a change.
     public let display: UInt32
 
     public init(image: CGImage, display: UInt32) {
@@ -13,7 +14,7 @@ public struct ScreenGrab: @unchecked Sendable {
 
 public protocol ScreenGrabber: Sendable {
     func allowed() -> Bool
-    func grab() async throws -> ScreenGrab
+    func grab(_ target: ScreenTarget) async throws -> ScreenGrab
 }
 
 public enum ScreenStatus: Equatable, Sendable {
@@ -31,6 +32,7 @@ public final class SlideRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var task: Task<Void, Never>?
     private var current: ScreenStatus?
+    private var chosen = ScreenTarget.screen
 
     public init(
         grabber: any ScreenGrabber, interval: Duration = SlideRecorder.interval,
@@ -47,6 +49,12 @@ public final class SlideRecorder: @unchecked Sendable {
 
     public var status: ScreenStatus? { lock.withLock { current } }
 
+    /// What to capture; may change during a recording and applies from the next screenshot.
+    public var target: ScreenTarget {
+        get { lock.withLock { chosen } }
+        set { lock.withLock { chosen = newValue } }
+    }
+
     public func start(store: @escaping @Sendable (UInt64, Data) throws -> Bool) {
         stop()
         guard grabber.allowed() else { return set(.noPermission) }
@@ -57,7 +65,8 @@ public final class SlideRecorder: @unchecked Sendable {
             while !Task.isCancelled {
                 let at = clock()
                 do {
-                    let grab = try await grabber.grab()
+                    guard let target = self?.target else { break }
+                    let grab = try await grabber.grab(target)
                     guard !Task.isCancelled else { break }
                     if let data = try sampler.offer(grab.image, display: grab.display) {
                         _ = try store(at, data)

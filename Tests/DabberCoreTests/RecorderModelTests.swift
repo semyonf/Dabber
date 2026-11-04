@@ -874,7 +874,7 @@ private final class FakeCalendar: CalendarSource, @unchecked Sendable {
 private struct StillScreen: ScreenGrabber {
     var permitted = true
     func allowed() -> Bool { permitted }
-    func grab() async throws -> ScreenGrab { ScreenGrab(image: screen(), display: 1) }
+    func grab(_ target: ScreenTarget) async throws -> ScreenGrab { ScreenGrab(image: screen(), display: 1) }
 }
 
 @MainActor
@@ -902,6 +902,25 @@ private func slidesModel(
     m.toggleSlides()
     #expect(!m.slidesOn)
     #expect(saved == [true, false])
+}
+
+@MainActor @Test func screenTargetIsSavedAndCanChangeWhileRecording() async {
+    let e = FakeEngine()
+    nonisolated(unsafe) var saved: [ScreenTarget] = []
+    let slides = SlideRecorder(grabber: StillScreen(), interval: .milliseconds(5))
+    let window = ScreenTarget.window(WindowTarget(id: 5, app: "Keynote", title: "Deck"))
+    let m = RecorderModel(
+        engine: e, catalog: FakeCatalog(devices: [airpods]), enabledIDs: ["computer", "ap"], persist: { _ in },
+        finalize: { dir, _ in dir }, slides: slides, slidesOn: true, screenTarget: window,
+        persistScreenTarget: { saved.append($0) })
+    m.refreshDevices()
+    #expect(slides.target == window)
+    await m.startStop()
+    m.setScreenTarget(.screen)
+    #expect(m.screenTarget == .screen)
+    #expect(slides.target == .screen)
+    #expect(saved == [.screen])
+    await m.startStop()
 }
 
 @MainActor @Test func transcribeSwitchIsSavedAndCanChangeWhileRecording() async {

@@ -96,6 +96,7 @@ struct RecordingSection: View {
             }
             Toggle("Record slides", isOn: Binding(get: { model.slidesOn }, set: { _ in model.toggleSlides() }))
                 .disabled(model.isRecording)
+            if model.slidesOn { ScreenTargetRow(model: model) }
             Toggle("Transcribe", isOn: Binding(get: { model.transcribeOn }, set: { _ in model.toggleTranscribe() }))
             if let line = model.speechStatusText {
                 Text(line).font(.caption).foregroundStyle(speechFailed ? .orange : .secondary)
@@ -146,6 +147,59 @@ struct RecordingSection: View {
         panel.prompt = "Choose"
         NSApp.activate()
         if panel.runModal() == .OK, let url = panel.url { model.setOutputFolder(url) }
+    }
+}
+
+/// What the slides show: the whole screen, one window or an area. Can be changed while recording.
+struct ScreenTargetRow: View {
+    let model: RecorderModel
+    @State private var windows: [WindowTarget] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Show:").font(.caption).foregroundStyle(.secondary)
+                Menu(model.screenTarget.title) {
+                    Button("Whole screen") { model.setScreenTarget(.screen) }
+                    Button("Area…") { pickArea() }
+                    Section("Window") {
+                        if windows.isEmpty { Text("No windows found") }
+                        ForEach(windows, id: \.id) { window in
+                            Button(ScreenTarget.window(window).title) { model.setScreenTarget(.window(window)) }
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .lineLimit(1)
+            }
+            if case .area(let area) = model.screenTarget {
+                Toggle("Area follows when you switch desktops", isOn: Binding(
+                    get: { area.followsDesktops },
+                    set: {
+                        var changed = area
+                        changed.followsDesktops = $0
+                        model.setScreenTarget(.area(changed))
+                    }))
+                    .help("Off: the area keeps showing the desktop where it was chosen, even while you are on another one")
+            }
+        }
+        .padding(.leading, 20)
+        .task { windows = await LiveScreenGrabber.windows() }
+    }
+
+    private func pickArea() {
+        var follows = true
+        if case .area(let area) = model.screenTarget { follows = area.followsDesktops }
+        let model = self.model
+        AreaPicker.pick { picked in
+            guard let picked else { return }
+            Task {
+                let windows = await LiveScreenGrabber.desktopWindows(display: picked.display)
+                model.setScreenTarget(.area(AreaTarget(
+                    display: picked.display, x: picked.rect.minX, y: picked.rect.minY,
+                    width: picked.rect.width, height: picked.rect.height, followsDesktops: follows, windows: windows)))
+            }
+        }
     }
 }
 

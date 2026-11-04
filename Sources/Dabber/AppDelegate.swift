@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let outputKey = "outputFolder"
     private static let legacyKey = "legacySessionsAdopted"
     private static let slidesKey = "recordSlides"
+    private static let screenTargetKey = "screenTarget"
     private static let backupKey = "backupMic"
     private static let transcribeKey = "transcribe"
 
@@ -39,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         slides: SlideRecorder(grabber: LiveScreenGrabber()),
         slidesOn: UserDefaults.standard.bool(forKey: slidesKey),
         persistSlides: { UserDefaults.standard.set($0, forKey: slidesKey) },
+        screenTarget: ScreenTarget.decode(UserDefaults.standard.data(forKey: screenTargetKey)),
+        persistScreenTarget: { UserDefaults.standard.set($0.encoded(), forKey: screenTargetKey) },
         transcribeOn: transcribeOn,
         persistTranscribe: {
             UserDefaults.standard.set($0, forKey: transcribeKey)

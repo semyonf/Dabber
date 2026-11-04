@@ -85,6 +85,7 @@ public final class RecorderModel {
     public private(set) var title = ""
     public private(set) var outputFolder: URL
     public private(set) var slidesOn: Bool
+    public private(set) var screenTarget: ScreenTarget
     public private(set) var transcribeOn: Bool
     public private(set) var speechStatus = SpeechModelStatus.idle
     public private(set) var menuOpen = false
@@ -101,6 +102,7 @@ public final class RecorderModel {
     private let calendar: any CalendarSource
     private let slides: SlideRecorder?
     private let persistSlides: @Sendable (Bool) -> Void
+    private let persistScreenTarget: @Sendable (ScreenTarget) -> Void
     private let persistTranscribe: @Sendable (Bool) -> Void
     private let readSpeechStatus: @Sendable () -> SpeechModelStatus
     private let hotkey: (any MarkHotkey)?
@@ -136,6 +138,8 @@ public final class RecorderModel {
         slides: SlideRecorder? = nil,
         slidesOn: Bool = false,
         persistSlides: @escaping @Sendable (Bool) -> Void = { _ in },
+        screenTarget: ScreenTarget = .screen,
+        persistScreenTarget: @escaping @Sendable (ScreenTarget) -> Void = { _ in },
         transcribeOn: Bool = true,
         persistTranscribe: @escaping @Sendable (Bool) -> Void = { _ in },
         speechStatus: @escaping @Sendable () -> SpeechModelStatus = { .idle },
@@ -157,6 +161,9 @@ public final class RecorderModel {
         self.slides = slides
         self.slidesOn = slidesOn
         self.persistSlides = persistSlides
+        self.screenTarget = screenTarget
+        self.persistScreenTarget = persistScreenTarget
+        slides?.target = screenTarget
         self.transcribeOn = transcribeOn
         self.persistTranscribe = persistTranscribe
         readSpeechStatus = speechStatus
@@ -227,6 +234,13 @@ public final class RecorderModel {
         guard !isRecording else { return }
         slidesOn.toggle()
         persistSlides(slidesOn)
+    }
+
+    /// What the slides show. Unlike the slides switch, this may change during a recording: the next screenshot uses it.
+    public func setScreenTarget(_ target: ScreenTarget) {
+        screenTarget = target
+        slides?.target = target
+        persistScreenTarget(target)
     }
 
     /// Unlike slides, this may change during a recording: finalize reads the saved setting when it runs.

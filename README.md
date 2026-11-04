@@ -15,7 +15,7 @@ Dabber is a small macOS menu bar app that records what your Mac plays and what y
   recorded files and are also saved to `marks.txt`.
 - **Slides** (optional): with "Record slides" on, Dabber takes a screenshot every 2 seconds and, after Stop, makes a
   video: the mix plays, and each change of the screen stays in the picture until the next change. No screen video
-  is recorded.
+  is recorded. The screenshot can be the whole screen, one window (kept while you switch desktops) or an area.
 - **Clean microphones** (on by default): after Stop, the microphone tracks lose the call audio that the mic heard from
   the Mac's speakers (echo) and steady background noise.
 - **Transcript** (on your Mac): text and subtitles for every recording, with «Я» and «Собеседники».
@@ -201,13 +201,28 @@ recording, Dabber takes a screenshot of the display with the mouse pointer every
 when the screen has changed; a blinking text cursor or the menu bar clock does not count. The pointer itself is not
 in the picture.
 
+**Show:** under the switch chooses what the screenshots show. It can be changed while recording; the next screenshot
+uses it.
+- **Whole screen** (default): the display with the mouse pointer.
+- **A window** from the list (windows of all desktops): only that window, even when other windows cover it or you
+  swipe to another desktop (Space). A minimized window is not captured. Some apps, browsers among them, stop
+  redrawing a window nobody sees, so it may stay frozen until you come back to it. If the window is closed, the menu
+  says "Screen: the chosen … window is closed" and no screenshots are taken until you choose something else.
+- **Area…**: the screen dims; drag a rectangle on any display (Esc cancels). With **Area follows when you switch
+  desktops** on (default), it is that part of whatever the display shows, so it goes along when you swipe to another
+  desktop. Off, it keeps showing the desktop where you chose it while you work on another one: Dabber captures each
+  window of that desktop by itself and puts them together, over a dark background instead of the wallpaper. macOS
+  does not tell apps which desktop a window is on, so Dabber takes the windows that were on screen when you chose the
+  area, and updates the list whenever you are back on that desktop.
+
 After Stop, Dabber makes `<name>.mp4` next to the mix: the same sound, HEVC video at the screen's own resolution (3456 pixels wide at most), the same
 chapters. Each kept screenshot is shown until the next one; the first one is shown from 0:00. The screenshots
 are deleted after the video is made. If the video could not be made, the menu says "Slides video failed: …", the
 audio files are complete as usual, and the screenshots stay in the `frames` folder of the recording (HEIC files named
 by nanoseconds since the start).
 
-Everything on that display goes into the video: notifications, chats, passwords shown on screen. Turn Record slides
+Everything in the chosen screen, window or area goes into the video: notifications, chats, passwords shown on
+screen. Turn Record slides
 off for recordings where this matters.
 
 ### Clean up microphones
