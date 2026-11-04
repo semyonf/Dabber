@@ -262,10 +262,10 @@ below 0.6) are left out; this removes phrases the model invents from near-silenc
 When you use speakers instead of headphones, the microphone also hears Mac audio: words that repeat Mac audio are left
 out of «Я». A lone word, or Mac speech the model heard differently through the microphone, may still slip through.
 
-**Live transcript** (a switch under Transcribe, off by default): when a recording starts, a panel slides in at the
-right edge of the screen with the lines as they come, so you can read what you just missed. It floats over other
-windows on every desktop (over a full-screen call too), can be moved and resized, and stays after Stop until you close
-it; the menu shows the last two lines and a Panel button to bring it back. A line appears about 8 seconds after it was said (each track is transcribed
+**Live transcript** (a switch under Transcribe, off by default): while recording, the menu shows the lines as they come,
+so you can read what you just missed. The pin button in its header moves it to a large translucent panel over all
+windows (on every desktop, over a full-screen call too) that you can drag anywhere and resize; the pin in the panel, or
+closing it, puts the transcript back into the menu. A pinned transcript opens again with the next recording. A line appears about 8 seconds after it was said (each track is transcribed
 in 6-second windows). The lines are only shown, not saved: the transcript written after Stop is made again from the
 whole recording and is more accurate. Live lines of «Я» may repeat the other side when you use speakers. It uses the
 same speech model; until the model is downloaded the menu says so. It can be turned on or off during a recording.

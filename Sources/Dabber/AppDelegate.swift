@@ -34,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static func setLive(_ on: Bool) {
         if on {
             LiveTranscriber.shared.begin()
-            LiveTranscriptPanel.show()
+            LiveTranscriptPanel.showIfPinned()
             recorder.setLiveAudio { track, kind, samples, channels in
                 LiveTranscriber.shared.feed(
                     track: track, speaker: kind == .mic ? Transcript.me : Transcript.others, samples: samples,

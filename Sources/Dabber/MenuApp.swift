@@ -185,7 +185,7 @@ struct RecordingNow: View {
             TextField("Name (optional)", text: Binding(get: { model.title }, set: { model.setTitle($0) }))
                 .textFieldStyle(.roundedBorder)
             MarksView(model: model)
-            if live { LiveTranscriptView(compact: true) }
+            if live { LiveTranscriptView() }
         }
     }
 }
@@ -322,107 +322,155 @@ struct FooterRow: View {
     }
 }
 
-/// The live transcript, refreshed every second, newest at the bottom. Compact in the menu (the last lines and a
-/// button for the panel); full in `LiveTranscriptPanel`.
+/// The live transcript, refreshed every second, newest at the bottom. In the menu by default; the pin button moves
+/// it to `LiveTranscriptPanel`, a large translucent panel over all windows, and back.
 struct LiveTranscriptView: View {
-    var compact = false
+    /// True inside the floating panel.
+    var floating = false
+    @AppStorage(LiveTranscriptPanel.pinnedKey) private var pinned = false
 
     var body: some View {
+        if pinned && !floating {
+            HStack {
+                Label("Live transcript is pinned on screen", systemImage: "pin.fill").font(.caption)
+                Spacer()
+                Button("Bring back") { LiveTranscriptPanel.unpin() }.buttonStyle(.borderless).font(.caption)
+            }
+            .foregroundStyle(.secondary)
+            .padding(10)
+            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        } else {
+            transcript
+        }
+    }
+
+    private var transcript: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
-            let lines = Array(LiveTranscriber.shared.lines.suffix(compact ? 2 : 100))
-            VStack(alignment: .leading, spacing: compact ? 4 : 8) {
+            let lines = Array(LiveTranscriber.shared.lines.suffix(100))
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Label("Live transcript", systemImage: "text.bubble")
-                        .font(compact ? .caption.weight(.semibold) : .headline)
-                        .foregroundStyle(compact ? .secondary : .primary)
+                        .font(floating ? .headline : .caption.weight(.semibold))
+                        .foregroundStyle(floating ? .primary : .secondary)
                     Spacer()
-                    if compact {
-                        Button { LiveTranscriptPanel.show() } label: { Label("Panel", systemImage: "sidebar.right") }
-                            .buttonStyle(.borderless)
-                            .font(.caption)
-                            .help("Open the live transcript in a panel beside your windows")
+                    Button { floating ? LiveTranscriptPanel.unpin() : LiveTranscriptPanel.pin() } label: {
+                        Image(systemName: floating ? "pin.slash" : "pin")
                     }
+                    .buttonStyle(.borderless)
+                    .help(floating ? "Put the transcript back into the menu" : "Pin the transcript on screen: a large panel you can move anywhere")
                 }
                 if lines.isEmpty {
                     Text(LiveTranscriber.shared.status.map { "Live transcript \($0)" }
                         ?? "Listening… a line appears about 8 s after it is said.")
                         .font(.caption).foregroundStyle(.secondary)
-                } else if compact {
-                    ForEach(lines) { line in row(line).lineLimit(2) }
+                    if floating { Spacer() }
                 } else {
                     ScrollViewReader { proxy in
                         ScrollView {
-                            VStack(alignment: .leading, spacing: 10) {
+                            VStack(alignment: .leading, spacing: floating ? 12 : 6) {
                                 ForEach(lines) { line in row(line).id(line.id) }
                             }
                             .padding(.trailing, 6)
                         }
+                        .frame(maxHeight: floating ? .infinity : 200)
                         .onAppear { proxy.scrollTo(lines.last?.id, anchor: .bottom) }
                         .onChange(of: lines.last?.id) { _, last in
                             withAnimation { proxy.scrollTo(last, anchor: .bottom) }
                         }
                     }
-                }
-                if !lines.isEmpty, let status = LiveTranscriber.shared.status {
-                    Text("Live transcript \(status)").font(.caption).foregroundStyle(.orange)
+                    if let status = LiveTranscriber.shared.status {
+                        Text("Live transcript \(status)").font(.caption).foregroundStyle(.orange)
+                    }
                 }
             }
             .textSelection(.enabled)
-            .padding(compact ? 10 : 14)
-            .frame(maxWidth: .infinity, maxHeight: compact ? nil : .infinity, alignment: .topLeading)
-            .background(compact ? AnyShapeStyle(.quaternary.opacity(0.45)) : AnyShapeStyle(.clear),
+            .padding(floating ? 16 : 10)
+            .frame(maxWidth: .infinity, maxHeight: floating ? .infinity : nil, alignment: .topLeading)
+            .background(floating ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary.opacity(0.45)),
                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
     }
 
     private func row(_ line: LiveTranscriber.Line) -> some View {
-        let me = line.speaker == Transcript.me
+        let color = line.speaker == Transcript.me ? Color.accentColor : Color.purple
         return VStack(alignment: .leading, spacing: 2) {
-            if !compact {
-                HStack(spacing: 6) {
-                    Text(line.speaker).font(.caption.weight(.bold)).foregroundStyle(me ? Color.accentColor : Color.purple)
-                    Text(line.at, style: .time).font(.caption2).foregroundStyle(.tertiary)
-                }
-                Text(line.text).font(.body).fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("\(Text(line.speaker).bold().foregroundStyle(me ? Color.accentColor : Color.purple)) \(line.text)")
-                    .font(.callout)
+            HStack(spacing: 6) {
+                Text(line.speaker).font(.caption.weight(.bold)).foregroundStyle(color)
+                Text(line.at, style: .time).font(.caption2).foregroundStyle(.tertiary)
             }
+            Text(line.text)
+                .font(floating ? .title3 : .callout)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// The live transcript beside your windows: a floating panel at the right edge of the screen, on every desktop and
-/// over full-screen call apps. It slides in when a recording starts with the live transcript on and stays until you
-/// close it, so the last lines can be read after Stop too.
+/// The pinned live transcript: a large translucent panel over all windows, on every desktop and over full-screen
+/// apps, moved by dragging anywhere on it and resized from its edges. Closing it or its pin button puts the transcript
+/// back into the menu. Whether it is pinned is remembered, so a pinned transcript opens with the next recording.
 @MainActor
 enum LiveTranscriptPanel {
+    static let pinnedKey = "liveTranscriptPinned"
     private static var panel: NSPanel?
+    private static let closer = Closer()
 
-    static func show() {
+    static var pinned: Bool { UserDefaults.standard.bool(forKey: pinnedKey) }
+
+    static func pin() {
+        UserDefaults.standard.set(true, forKey: pinnedKey)
+        show()
+    }
+
+    static func unpin() {
+        UserDefaults.standard.set(false, forKey: pinnedKey)
+        let closing = panel
+        panel = nil
+        closing?.delegate = nil
+        closing?.close()
+    }
+
+    /// The panel's own close button: it is closing already.
+    fileprivate static func closed() {
+        UserDefaults.standard.set(false, forKey: pinnedKey)
+        panel = nil
+    }
+
+    /// Opens the panel if the transcript is pinned (for the start of a recording).
+    static func showIfPinned() {
+        if pinned { show() }
+    }
+
+    private static func show() {
         if let panel {
             panel.orderFrontRegardless()
             return
         }
-        let size = NSSize(width: 380, height: 520)
+        let size = NSSize(width: 460, height: 560)
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel, .fullSizeContentView],
+            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered, defer: false)
-        panel.title = "Live transcript"
+        panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isReleasedWhenClosed = false
         panel.level = .floating
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isMovableByWindowBackground = true
-        panel.minSize = NSSize(width: 280, height: 240)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.alphaValue = 0.92
+        panel.minSize = NSSize(width: 300, height: 220)
+        panel.setFrameAutosaveName("LiveTranscriptPanel")
+        panel.delegate = closer
         let content = NSVisualEffectView()
         content.material = .hudWindow
         content.blendingMode = .behindWindow
         content.state = .active
-        let hosting = NSHostingView(rootView: LiveTranscriptView().padding(.top, 18))
+        content.wantsLayer = true
+        content.layer?.cornerRadius = 14
+        let hosting = NSHostingView(rootView: LiveTranscriptView(floating: true).padding(.top, 12))
         hosting.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(hosting)
         NSLayoutConstraint.activate([
@@ -432,23 +480,21 @@ enum LiveTranscriptPanel {
             hosting.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
         panel.contentView = content
-        let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? .zero
-        let end = NSRect(x: visible.maxX - size.width - 12, y: visible.maxY - size.height - 12, width: size.width, height: size.height)
-        panel.setFrame(end.offsetBy(dx: size.width + 12, dy: 0), display: false)
-        panel.alphaValue = 0
-        panel.orderFrontRegardless()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.25
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel.animator().setFrame(end, display: true)
-            panel.animator().alphaValue = 1
+        if !panel.setFrameUsingName("LiveTranscriptPanel") {
+            let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? .zero
+            panel.setFrame(NSRect(
+                x: visible.maxX - size.width - 16, y: visible.maxY - size.height - 16,
+                width: size.width, height: size.height), display: false)
         }
+        panel.orderFrontRegardless()
         self.panel = panel
     }
 
-    static func close() {
-        panel?.close()
-        panel = nil
+    /// The close button unpins.
+    private final class Closer: NSObject, NSWindowDelegate {
+        func windowWillClose(_ notification: Notification) {
+            MainActor.assumeIsolated { LiveTranscriptPanel.closed() }
+        }
     }
 }
 
