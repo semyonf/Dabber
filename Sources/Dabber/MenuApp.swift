@@ -185,7 +185,7 @@ struct RecordingNow: View {
             TextField("Name (optional)", text: Binding(get: { model.title }, set: { model.setTitle($0) }))
                 .textFieldStyle(.roundedBorder)
             MarksView(model: model)
-            if live { LiveTranscriptView() }
+            if live { LiveTranscriptView(compact: true) }
         }
     }
 }
@@ -322,47 +322,133 @@ struct FooterRow: View {
     }
 }
 
-/// The last lines of the live transcript, refreshed every second, newest at the bottom.
+/// The live transcript, refreshed every second, newest at the bottom. Compact in the menu (the last lines and a
+/// button for the panel); full in `LiveTranscriptPanel`.
 struct LiveTranscriptView: View {
-    static let shown = 30
+    var compact = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
-            let lines = Array(LiveTranscriber.shared.lines.suffix(Self.shown))
-            VStack(alignment: .leading, spacing: 4) {
-                Label("Live transcript", systemImage: "text.bubble").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            let lines = Array(LiveTranscriber.shared.lines.suffix(compact ? 2 : 100))
+            VStack(alignment: .leading, spacing: compact ? 4 : 8) {
+                HStack {
+                    Label("Live transcript", systemImage: "text.bubble")
+                        .font(compact ? .caption.weight(.semibold) : .headline)
+                        .foregroundStyle(compact ? .secondary : .primary)
+                    Spacer()
+                    if compact {
+                        Button { LiveTranscriptPanel.show() } label: { Label("Panel", systemImage: "sidebar.right") }
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                            .help("Open the live transcript in a panel beside your windows")
+                    }
+                }
                 if lines.isEmpty {
                     Text(LiveTranscriber.shared.status.map { "Live transcript \($0)" }
                         ?? "Listening… a line appears about 8 s after it is said.")
                         .font(.caption).foregroundStyle(.secondary)
+                } else if compact {
+                    ForEach(lines) { line in row(line).lineLimit(2) }
                 } else {
                     ScrollViewReader { proxy in
                         ScrollView {
-                            VStack(alignment: .leading, spacing: 4) {
-                                ForEach(lines) { line in
-                                    Text("\(Text(line.speaker).bold().foregroundStyle(line.speaker == Transcript.me ? Color.accentColor : Color.purple)) \(line.text)")
-                                        .font(.callout)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .id(line.id)
-                                }
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(lines) { line in row(line).id(line.id) }
                             }
+                            .padding(.trailing, 6)
                         }
-                        .frame(maxHeight: 180)
                         .onAppear { proxy.scrollTo(lines.last?.id, anchor: .bottom) }
                         .onChange(of: lines.last?.id) { _, last in
                             withAnimation { proxy.scrollTo(last, anchor: .bottom) }
                         }
                     }
-                    if let status = LiveTranscriber.shared.status {
-                        Text("Live transcript \(status)").font(.caption).foregroundStyle(.orange)
-                    }
+                }
+                if !lines.isEmpty, let status = LiveTranscriber.shared.status {
+                    Text("Live transcript \(status)").font(.caption).foregroundStyle(.orange)
                 }
             }
             .textSelection(.enabled)
-            .padding(10)
-            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(compact ? 10 : 14)
+            .frame(maxWidth: .infinity, maxHeight: compact ? nil : .infinity, alignment: .topLeading)
+            .background(compact ? AnyShapeStyle(.quaternary.opacity(0.45)) : AnyShapeStyle(.clear),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
+    }
+
+    private func row(_ line: LiveTranscriber.Line) -> some View {
+        let me = line.speaker == Transcript.me
+        return VStack(alignment: .leading, spacing: 2) {
+            if !compact {
+                HStack(spacing: 6) {
+                    Text(line.speaker).font(.caption.weight(.bold)).foregroundStyle(me ? Color.accentColor : Color.purple)
+                    Text(line.at, style: .time).font(.caption2).foregroundStyle(.tertiary)
+                }
+                Text(line.text).font(.body).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("\(Text(line.speaker).bold().foregroundStyle(me ? Color.accentColor : Color.purple)) \(line.text)")
+                    .font(.callout)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The live transcript beside your windows: a floating panel at the right edge of the screen, on every desktop and
+/// over full-screen call apps. It slides in when a recording starts with the live transcript on and stays until you
+/// close it, so the last lines can be read after Stop too.
+@MainActor
+enum LiveTranscriptPanel {
+    private static var panel: NSPanel?
+
+    static func show() {
+        if let panel {
+            panel.orderFrontRegardless()
+            return
+        }
+        let size = NSSize(width: 380, height: 520)
+        let panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        panel.title = "Live transcript"
+        panel.titlebarAppearsTransparent = true
+        panel.isReleasedWhenClosed = false
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isMovableByWindowBackground = true
+        panel.minSize = NSSize(width: 280, height: 240)
+        let content = NSVisualEffectView()
+        content.material = .hudWindow
+        content.blendingMode = .behindWindow
+        content.state = .active
+        let hosting = NSHostingView(rootView: LiveTranscriptView().padding(.top, 18))
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(hosting)
+        NSLayoutConstraint.activate([
+            hosting.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            hosting.topAnchor.constraint(equalTo: content.topAnchor),
+            hosting.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
+        panel.contentView = content
+        let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? .zero
+        let end = NSRect(x: visible.maxX - size.width - 12, y: visible.maxY - size.height - 12, width: size.width, height: size.height)
+        panel.setFrame(end.offsetBy(dx: size.width + 12, dy: 0), display: false)
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.25
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().setFrame(end, display: true)
+            panel.animator().alphaValue = 1
+        }
+        self.panel = panel
+    }
+
+    static func close() {
+        panel?.close()
+        panel = nil
     }
 }
 
