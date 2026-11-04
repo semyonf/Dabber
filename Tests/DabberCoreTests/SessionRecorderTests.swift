@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import DabberCore
 
@@ -171,4 +172,17 @@ private let specs = [
         let (r, _) = try recorder()
         #expect(r.stop() == nil)
     }
+}
+
+/// The live sink is read for every 50 ms of every track. Reading it must not wrap it again: with `Mutex.withLock { $0 }`
+/// it grew by two thunks per read and calling it ran out of stack after a few minutes of recording.
+@Test func liveAudioSinkCanBeReadForHoursWithoutGrowing() {
+    let slot = LiveAudioSlot()
+    let calls = Atomic<Int>(0)
+    slot.set { _, _, _, _ in calls.add(1, ordering: .relaxed) }
+    // Two tracks for an hour at 20 reads per second.
+    for _ in 0..<144_000 { slot.current?("mic - A", .mic, [], 1) }
+    #expect(calls.load(ordering: .relaxed) == 144_000)
+    slot.set(nil)
+    #expect(slot.current == nil)
 }
