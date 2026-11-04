@@ -24,8 +24,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.object(forKey: cleanMicsKey) as? Bool ?? true
     }
 
+    /// "Live transcript" in the menu; off unless switched on.
+    static let liveKey = "liveTranscript"
+    nonisolated static var liveOn: Bool { UserDefaults.standard.bool(forKey: liveKey) }
+    @MainActor private static var wasRecording = false
+
+    static let recorder = SessionRecorder(root: AppPaths.workRoot, appVersion: AppPaths.version)
+
     @MainActor static let model = RecorderModel(
-        engine: SessionRecorder(root: AppPaths.workRoot, appVersion: AppPaths.version),
+        engine: recorder,
         catalog: LiveDeviceCatalog(),
         enabledIDs: UserDefaults.standard.stringArray(forKey: enabledKey).map(Set.init)
             ?? RecorderModel.defaultEnabledIDs(defaultInputUID: defaultInputDeviceUID()),
@@ -111,8 +118,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Self.model.refreshDevices()
             Self.feed.refresh()
         }
+        Self.recorder.setLiveAudio { track, kind, samples, channels in
+            LiveTranscriber.shared.feed(
+                track: track, speaker: kind == .mic ? Transcript.me : Transcript.others, samples: samples, channels: channels)
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             Task { @MainActor in
+                if Self.model.isRecording != Self.wasRecording {
+                    Self.wasRecording = Self.model.isRecording
+                    if Self.wasRecording, Self.liveOn { LiveTranscriber.shared.begin() }
+                    if !Self.wasRecording { LiveTranscriber.shared.end() }
+                }
                 Self.ticks += 1
                 guard Self.model.menuOpen || Self.ticks % 4 == 0 else { return }
                 Self.model.tick()

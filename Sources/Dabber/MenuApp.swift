@@ -70,6 +70,7 @@ struct LevelBar: View {
 struct RecordingSection: View {
     let model: RecorderModel
     @AppStorage(AppDelegate.cleanMicsKey) var cleanMics = true
+    @AppStorage(AppDelegate.liveKey) var live = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -102,6 +103,12 @@ struct RecordingSection: View {
             if let line = model.speechStatusText {
                 Text(line).font(.caption).foregroundStyle(speechFailed ? .orange : .secondary)
             }
+            Toggle("Live transcript", isOn: $live)
+                .help("While recording, show the last lines here, about 8 s late. The transcript saved after Stop is made again from the whole recording.")
+                .onChange(of: live) { _, on in
+                    if !on { LiveTranscriber.shared.end() } else if model.isRecording { LiveTranscriber.shared.begin() }
+                }
+            if live, model.isRecording { LiveTranscriptView() }
             Toggle("Clean up microphones", isOn: $cleanMics)
                 .help("After Stop, remove the echo of Mac audio, background noise and room echo from the microphone tracks")
                 .onChange(of: cleanMics) { _, on in if on { LocalVqeModel.shared.prepare() } }
@@ -149,6 +156,31 @@ struct RecordingSection: View {
         panel.prompt = "Choose"
         NSApp.activate()
         if panel.runModal() == .OK, let url = panel.url { model.setOutputFolder(url) }
+    }
+}
+
+/// The last lines of the live transcript, refreshed every second.
+struct LiveTranscriptView: View {
+    static let shown = 8
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            let lines = LiveTranscriber.shared.lines.suffix(Self.shown)
+            VStack(alignment: .leading, spacing: 3) {
+                if lines.isEmpty {
+                    Text(LiveTranscriber.shared.status.map { "Live transcript \($0)" }
+                        ?? "Listening… a line appears about 8 s after it is said.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(lines) { line in
+                    Text("\(Text(line.speaker).bold()): \(line.text)")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .font(.caption)
+            .textSelection(.enabled)
+            .padding(.leading, 20)
+        }
     }
 }
 

@@ -261,6 +261,12 @@ below 0.6) are left out; this removes phrases the model invents from near-silenc
 When you use speakers instead of headphones, the microphone also hears Mac audio: words that repeat Mac audio are left
 out of «Я». A lone word, or Mac speech the model heard differently through the microphone, may still slip through.
 
+**Live transcript** (a switch under Transcribe, off by default): while recording, the menu shows the last eight lines,
+so you can read what you just missed. A line appears about 8 seconds after it was said (each track is transcribed
+in 6-second windows). The lines are only shown, not saved: the transcript written after Stop is made again from the
+whole recording and is more accurate. Live lines of «Я» may repeat the other side when you use speakers. It uses the
+same speech model; until the model is downloaded the menu says so. It can be turned on or off during a recording.
+
 - `transcript.txt`: the text with times, speakers and your marks.
 - `transcript.srt`: subtitles for any player. Both files are written next to the recording.
 - In the slides video, a Russian subtitle track. It is off when the video opens: turn it on in QuickTime Player
