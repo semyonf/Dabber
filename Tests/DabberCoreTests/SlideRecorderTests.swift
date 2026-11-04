@@ -141,6 +141,8 @@ private func ticking() -> @Sendable () -> UInt64 {
     #expect(ScreenTarget.decode(Data("junk".utf8)) == .screen)
     #expect(area.title == "Area 800×600")
     #expect(ScreenTarget.window(WindowTarget(id: 1, app: "Zoom", title: "")).title == "Zoom")
+    #expect(ScreenTarget.window(WindowTarget(id: 1, app: "Activity Monitor", title: "Activity Monitor")).title == "Activity Monitor")
+    #expect(ScreenTarget.window(WindowTarget(id: 1, app: "Safari", title: "Docs")).title == "Safari — Docs")
 }
 
 @Test func pinnedDesktopKeepsItsWindowsWhileAnotherDesktopIsShown() {

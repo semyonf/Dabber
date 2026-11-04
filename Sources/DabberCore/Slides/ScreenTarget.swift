@@ -12,7 +12,7 @@ public enum ScreenTarget: Codable, Equatable, Sendable {
     public var title: String {
         switch self {
         case .screen: return "Whole screen"
-        case .window(let w): return w.title.isEmpty ? w.app : "\(w.app) — \(w.title)"
+        case .window(let w): return w.title.isEmpty || w.title == w.app ? w.app : "\(w.app) — \(w.title)"
         case .area(let a): return "Area \(Int(a.width))×\(Int(a.height))"
         }
     }
