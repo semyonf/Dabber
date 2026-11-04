@@ -131,6 +131,20 @@ final class ModelMicCleaner: MicCleaning, @unchecked Sendable {
     }
 }
 
+/// 48 kHz to 16 kHz with the same low-pass filter as `ModelMicCleaner`, state kept across calls.
+public struct Downsampler {
+    private var filter = FIRFilter.lowPass()
+    private var phase = 0
+
+    public init() {}
+
+    public mutating func process(_ x: [Float]) -> [Float] {
+        let out = filter.filter(x, from: (3 - phase) % 3, step: 3)
+        phase = (phase + x.count) % 3
+        return out
+    }
+}
+
 /// Linear-phase FIR filter with state across calls.
 struct FIRFilter {
     static let taps = 145

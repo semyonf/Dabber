@@ -191,3 +191,24 @@ private func wideNoise(_ count: Int) -> [Float] { noise(count, seed: 11, amplitu
     let error = zip(out, mic).dropFirst(3 * 48_000).dropLast(1_000).map { abs($0 - $1) }.max() ?? 1
     #expect(error < 1e-3)
 }
+
+@Test func downsamplerKeepsSpeechBandAndDropsWhatIsAbove8kHz() {
+    func tone(_ hz: Double, _ count: Int) -> [Float] {
+        (0..<count).map { Float(0.5 * sin(2 * Double.pi * hz * Double($0) / 48_000)) }
+    }
+    // In uneven pieces, as the recorder hands them over.
+    func run(_ x: [Float]) -> [Float] {
+        var d = Downsampler()
+        var out: [Float] = []
+        var start = 0
+        for size in [1_000, 2_401, 7, 48_000, 100_000] where start < x.count {
+            out += d.process(Array(x[start..<min(start + size, x.count)]))
+            start += size
+        }
+        return out
+    }
+    let low = run(tone(1_000, 96_000))
+    #expect(low.count == 32_000)
+    #expect(abs(rms(low[2_000...]) - 0.354) < 0.01)
+    #expect(rms(run(tone(12_000, 96_000))[2_000...]) < 0.001)
+}

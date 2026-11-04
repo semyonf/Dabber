@@ -83,6 +83,8 @@ public final class SessionRecorder: @unchecked Sendable {
     private var sleepWatcher: SleepWatcher?
     /// Its own lock: the writers call it while `lock` may be held by a stop waiting for them.
     private let liveAudio = Mutex<LiveAudio?>(nil)
+    /// The live sink runs here, never on a writer's queue: whatever it does cannot hold up or break the recording.
+    private let liveQueue = DispatchQueue(label: "dabber.live", qos: .utility)
     private var lastError: String?
     private var lastDiskCheck: Date?
     private var diskWarning: String?
@@ -171,7 +173,8 @@ public final class SessionRecorder: @unchecked Sendable {
         source.writer.onWriteError = { [weak self] error in self?.stopAfterError(error) }
         let (base, kind, channels) = (source.writer.baseName, source.spec.kind, source.writer.channels)
         source.writer.onAudio = { [weak self] samples in
-            self?.liveAudio.withLock { $0 }?(base, kind, samples, channels)
+            guard let self, let sink = liveAudio.withLock({ $0 }) else { return }
+            liveQueue.async { sink(base, kind, samples, channels) }
         }
     }
 

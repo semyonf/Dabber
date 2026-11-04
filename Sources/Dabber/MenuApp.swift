@@ -242,7 +242,7 @@ struct AfterStopCard: View {
             Toggle("Live transcript while recording", isOn: $live)
                 .help("Show the last lines in this menu, about 8 s late. The transcript saved after Stop is made again from the whole recording.")
                 .onChange(of: live) { _, on in
-                    if !on { LiveTranscriber.shared.end() } else if model.isRecording { LiveTranscriber.shared.begin() }
+                    if !on { AppDelegate.setLive(false) } else if model.isRecording { AppDelegate.setLive(true) }
                 }
         }
         .toggleStyle(.switch)
@@ -319,6 +319,9 @@ struct LiveTranscriptView: View {
                         .onChange(of: lines.last?.id) { _, last in
                             withAnimation { proxy.scrollTo(last, anchor: .bottom) }
                         }
+                    }
+                    if let status = LiveTranscriber.shared.status {
+                        Text("Live transcript \(status)").font(.caption).foregroundStyle(.orange)
                     }
                 }
             }

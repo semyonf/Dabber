@@ -29,6 +29,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     nonisolated static var liveOn: Bool { UserDefaults.standard.bool(forKey: liveKey) }
     @MainActor private static var wasRecording = false
 
+    /// Starts the live transcript (the recorder then hands it every track's audio) or stops it (and the recorder
+    /// hands nothing on). Called when a recording starts or stops and when the switch changes.
+    @MainActor static func setLive(_ on: Bool) {
+        if on {
+            LiveTranscriber.shared.begin()
+            recorder.setLiveAudio { track, kind, samples, channels in
+                LiveTranscriber.shared.feed(
+                    track: track, speaker: kind == .mic ? Transcript.me : Transcript.others, samples: samples,
+                    channels: channels)
+            }
+        } else {
+            recorder.setLiveAudio(nil)
+            LiveTranscriber.shared.end()
+        }
+    }
+
     static let recorder = SessionRecorder(root: AppPaths.workRoot, appVersion: AppPaths.version)
 
     @MainActor static let model = RecorderModel(
@@ -118,16 +134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Self.model.refreshDevices()
             Self.feed.refresh()
         }
-        Self.recorder.setLiveAudio { track, kind, samples, channels in
-            LiveTranscriber.shared.feed(
-                track: track, speaker: kind == .mic ? Transcript.me : Transcript.others, samples: samples, channels: channels)
-        }
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             Task { @MainActor in
                 if Self.model.isRecording != Self.wasRecording {
                     Self.wasRecording = Self.model.isRecording
-                    if Self.wasRecording, Self.liveOn { LiveTranscriber.shared.begin() }
-                    if !Self.wasRecording { LiveTranscriber.shared.end() }
+                    if Self.wasRecording, Self.liveOn { Self.setLive(true) }
+                    if !Self.wasRecording { Self.setLive(false) }
                 }
                 Self.ticks += 1
                 guard Self.model.menuOpen || Self.ticks % 4 == 0 else { return }
