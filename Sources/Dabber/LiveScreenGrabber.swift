@@ -138,8 +138,21 @@ final class LiveScreenGrabber: ScreenGrabber {
         return ScreenGrab(image: image, display: area.display)
     }
 
-    /// Windows to choose from in the menu: ordinary titled windows of other apps, on any desktop.
-    static func windows() async -> [WindowTarget] {
+    /// A window to choose from: what to record, and whose icon to show.
+    struct WindowChoice: Sendable, Identifiable {
+        let target: WindowTarget
+        let pid: Int32
+        let onScreen: Bool
+        var id: UInt32 { target.id }
+    }
+
+    /// A captured picture for the chooser (CGImage is immutable, so it may cross threads).
+    struct Picture: @unchecked Sendable {
+        let image: CGImage
+    }
+
+    /// Windows to choose from: ordinary titled windows of other apps, on any desktop; the ones on screen first.
+    static func windows() async -> [WindowChoice] {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
         else { return [] }
         let own = Bundle.main.bundleIdentifier
@@ -148,8 +161,46 @@ final class LiveScreenGrabber: ScreenGrabber {
                 $0.windowLayer == 0 && $0.frame.width >= 100 && $0.frame.height >= 100 && !($0.title ?? "").isEmpty
                     && $0.owningApplication != nil && $0.owningApplication?.bundleIdentifier != own
             }
-            .map { WindowTarget(id: $0.windowID, app: $0.owningApplication?.applicationName ?? "", title: $0.title ?? "") }
-            .sorted { ($0.app, $0.title) < ($1.app, $1.title) }
+            .map {
+                WindowChoice(
+                    target: WindowTarget(id: $0.windowID, app: $0.owningApplication?.applicationName ?? "", title: $0.title ?? ""),
+                    pid: $0.owningApplication?.processID ?? 0, onScreen: $0.isOnScreen)
+            }
+            .sorted { a, b in
+                a.onScreen != b.onScreen ? a.onScreen : (a.target.app, a.target.title) < (b.target.app, b.target.title)
+            }
+    }
+
+    /// Small pictures of windows, one by one as they are captured.
+    static func thumbnails(of ids: [UInt32], width: Int = 360) -> AsyncStream<(UInt32, Picture)> {
+        AsyncStream { continuation in
+            let task = Task {
+                defer { continuation.finish() }
+                guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
+                else { return }
+                for id in ids {
+                    if Task.isCancelled { return }
+                    guard let window = content.windows.first(where: { $0.windowID == id }) else { continue }
+                    let config = SCStreamConfiguration()
+                    let scale = Double(width) / max(1, Double(window.frame.width))
+                    config.width = width
+                    config.height = max(2, Int(Double(window.frame.height) * scale))
+                    config.showsCursor = false
+                    config.ignoreShadowsSingleWindow = true
+                    let filter = SCContentFilter(desktopIndependentWindow: window)
+                    if let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) {
+                        continuation.yield((id, Picture(image: image)))
+                    }
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// A small picture of the display with the pointer.
+    static func screenThumbnail() async -> Picture? {
+        guard let grab = try? await LiveScreenGrabber().grab(.screen) else { return nil }
+        return Picture(image: grab.image)
     }
 
     /// The windows of the desktop now shown on a display: what a pinned area starts from.

@@ -24,7 +24,7 @@ public enum ScreenTarget: Codable, Equatable, Sendable {
     public func encoded() -> Data { (try? JSONEncoder().encode(self)) ?? Data() }
 }
 
-public struct WindowTarget: Codable, Equatable, Sendable {
+public struct WindowTarget: Codable, Hashable, Sendable {
     /// `CGWindowID`: stays the same while the window exists.
     public let id: UInt32
     public let app: String

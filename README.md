@@ -201,15 +201,16 @@ recording, Dabber takes a screenshot of the display with the mouse pointer every
 when the screen has changed; a blinking text cursor or the menu bar clock does not count. The pointer itself is not
 in the picture.
 
-**Show:** under the switch chooses what the screenshots show. It can be changed while recording; the next screenshot
-uses it.
+**Choose…** next to the switch opens a window like the share window of call apps: the whole screen, an area and a
+picture of every window. Click one and press Use (or double-click it). It can be changed while recording; the next
+screenshot uses it.
 - **Whole screen** (default): the display with the mouse pointer.
-- **A window** from the list (windows of all desktops): only that window, even when other windows cover it or you
+- **A window** (windows of all desktops, the ones on screen first): only that window, even when other windows cover it or you
   swipe to another desktop (Space). A minimized window is not captured. Some apps, browsers among them, stop
   redrawing a window nobody sees, so it may stay frozen until you come back to it. If the window is closed, the menu
   says "Screen: the chosen … window is closed" and no screenshots are taken until you choose something else.
-- **Area…**: the screen dims; drag a rectangle on any display (Esc cancels). With **Area follows when you switch
-  desktops** on (default), it is that part of whatever the display shows, so it goes along when you swipe to another
+- **Area…**: after Choose area the screens dim; drag a rectangle on any display (Esc cancels). With **Area follows
+  when you switch desktops** (in the menu, under the slides switch) on (default), it is that part of whatever the display shows, so it goes along when you swipe to another
   desktop. Off, it keeps showing the desktop where you chose it while you work on another one: Dabber captures each
   window of that desktop by itself and puts them together, over a dark background instead of the wallpaper. macOS
   does not tell apps which desktop a window is on, so Dabber takes the windows that were on screen when you chose the
