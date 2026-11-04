@@ -68,6 +68,7 @@ struct LevelBar: View {
 
 struct RecordingSection: View {
     let model: RecorderModel
+    @AppStorage(AppDelegate.cleanMicsKey) var cleanMics = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -99,6 +100,8 @@ struct RecordingSection: View {
             if let line = model.speechStatusText {
                 Text(line).font(.caption).foregroundStyle(speechFailed ? .orange : .secondary)
             }
+            Toggle("Clean up microphones", isOn: $cleanMics)
+                .help("After Stop, remove the echo of Mac audio and steady background noise from the microphone tracks")
             if model.isRecording {
                 HStack {
                     Text("Name").font(.caption).foregroundStyle(.secondary)

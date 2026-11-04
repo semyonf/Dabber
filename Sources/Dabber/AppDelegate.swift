@@ -17,6 +17,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.object(forKey: transcribeKey) as? Bool ?? true
     }
     nonisolated private static var speech: SpeechToText? { transcribeOn ? ParakeetSpeech.shared.transcribe : nil }
+    /// "Clean up microphones" in the menu; on unless switched off. Read when a recording is finished.
+    static let cleanMicsKey = "cleanMics"
+    nonisolated private static var cleanMicsOn: Bool {
+        UserDefaults.standard.object(forKey: cleanMicsKey) as? Bool ?? true
+    }
 
     @MainActor static let model = RecorderModel(
         engine: SessionRecorder(root: AppPaths.workRoot, appVersion: AppPaths.version),
@@ -26,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         names: UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String] ?? [:],
         persist: { UserDefaults.standard.set(Array($0).sorted(), forKey: enabledKey) },
         persistNames: { UserDefaults.standard.set($0, forKey: namesKey) },
-        finalize: { try Delivery.finishAndDeliver($0, output: $1, speech: speech) },
+        finalize: { try Delivery.finishAndDeliver($0, output: $1, speech: speech, cleanMics: cleanMicsOn) },
         calendar: EventKitCalendar(),
         outputFolder: UserDefaults.standard.string(forKey: outputKey).map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? AppPaths.recordingsRoot,
@@ -89,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await ParakeetSpeech.shared.waitIfCached(seconds: 60)
             }
             let failure = Delivery.recover(
-                pending, work: work, output: output, speech: speech,
+                pending, work: work, output: output, speech: speech, cleanMics: Self.cleanMicsOn,
                 onError: { dir, error in Task { @MainActor in Self.model.recoveryFailed(dir, error) } },
                 onReport: { dir, report in Task { @MainActor in Self.model.recovered(dir, report) } })
             await MainActor.run { Self.model.deliveryDone(failure: failure) }

@@ -79,9 +79,14 @@ public struct FinalizeReport: Codable, Equatable, Sendable {
     public var unreadable: [String]?
     public var transcriptError: String?
     public var subtitlesError: String?
+    /// Microphone tracks that went through `MicCleaner`; nil when cleaning was off.
+    public var cleanedMics: [String]?
+    /// Per cleaned track, how late the mic heard Mac audio. A track without a clear echo is not listed.
+    public var echoDelayMillis: [String: Double]?
     public init(
         totalFrames: Int, gaps: [GapRecord], driftMillis: [String: Double], resampled: [String], slidesError: String? = nil,
-        unreadable: [String]? = nil, transcriptError: String? = nil, subtitlesError: String? = nil
+        unreadable: [String]? = nil, transcriptError: String? = nil, subtitlesError: String? = nil,
+        cleanedMics: [String]? = nil, echoDelayMillis: [String: Double]? = nil
     ) {
         self.totalFrames = totalFrames
         self.gaps = gaps
@@ -91,6 +96,8 @@ public struct FinalizeReport: Codable, Equatable, Sendable {
         self.unreadable = unreadable
         self.transcriptError = transcriptError
         self.subtitlesError = subtitlesError
+        self.cleanedMics = cleanedMics
+        self.echoDelayMillis = echoDelayMillis
     }
 }
 

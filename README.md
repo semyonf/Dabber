@@ -16,6 +16,8 @@ Dabber is a small macOS menu bar app that records what your Mac plays and what y
 - **Slides** (optional): with "Record slides" on, Dabber takes a screenshot every 2 seconds and, after Stop, makes a
   video: the mix plays, and each change of the screen stays in the picture until the next change. No screen video
   is recorded.
+- **Clean microphones** (on by default): after Stop, the microphone tracks lose the call audio that the mic heard from
+  the Mac's speakers (echo) and steady background noise.
 - **Transcript** (on your Mac): text and subtitles for every recording, with «Я» and «Собеседники».
 - **Names from the calendar**: a recording is named after the calendar event that is on (or starts within 15 minutes).
   You can change the name while recording.
@@ -208,6 +210,26 @@ by nanoseconds since the start).
 Everything on that display goes into the video: notifications, chats, passwords shown on screen. Turn Record slides
 off for recordings where this matters.
 
+### Clean up microphones
+
+Without headphones the microphone also hears the call from the Mac's speakers, so the other side is recorded twice:
+clean in the Mac audio track and late, with the room's echo, in the microphone track. With **Clean up microphones** on
+(under the sources, on by default), Dabber removes this from every microphone track after Stop, before the files are
+encoded, mixed and transcribed:
+
+- **Echo of Mac audio.** Dabber measures how late the microphone hears Mac audio, then an adaptive filter (the same
+  approach as the echo cancellers of call apps) learns how the sound reaches the mic and subtracts it. What remains
+  after the filter is taken down further. When you speak at the same time as the other side, your voice stays, though
+  it may sound slightly thinner in those moments. A microphone that does not hear Mac audio (headphones) gets only the
+  noise reduction.
+- **Steady noise**: fans, hum, air conditioning, the rumble of traffic, and anything below about 70 Hz. Short sharp
+  sounds (a knock, a keyboard click, a door) are not steady noise and stay mostly as they were.
+
+The filter needs a few seconds of the other side speaking to learn the room, so the very first words of the call
+may keep a little echo. `session.json` lists the cleaned tracks (`cleanedMics`) and the measured delay
+(`echoDelayMillis`). The switch is read when a recording is finished, so it applies to recordings stopped after the
+change. Turn it off to keep the microphone tracks exactly as recorded: the cleaning cannot be undone in the finished files.
+
 ### Transcript and subtitles
 
 After Stop, Dabber transcribes the recording on your Mac with the Parakeet speech model. Nothing leaves the Mac.
@@ -342,7 +364,8 @@ Your recordings in the output folder are not touched.
 - **"Finishing…" takes a long time.** After Stop Dabber encodes every track and the mix in the background, at low
   priority so that a new recording is not disturbed. This takes longer for long recordings and more sources, longer
   again if the output folder is on another disk, and longer while other apps keep the processor busy. The transcript
-  adds about 15 seconds per hour of audio for each track once the speech model is loaded. You can record meanwhile; if
+  adds about 15 seconds per hour of audio for each track once the speech model is loaded, and Clean up microphones
+  reads the recording once more and processes every microphone track. You can record meanwhile; if
   you quit, Dabber waits for it. If Dabber was closed unexpectedly, unfinished recordings are finished at the next
   launch.
 
