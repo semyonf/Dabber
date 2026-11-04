@@ -101,16 +101,21 @@ struct RecordHeader: View {
                 Button { Task { await model.startStop() } } label: {
                     Label(
                         model.isRecording ? "Stop" : "Record",
-                        systemImage: model.isRecording ? "stop.fill" : "record.circle")
-                        .frame(minWidth: 96)
+                        systemImage: model.isRecording ? "stop.fill" : "circle.fill")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(model.isRecording ? .gray : .red)
-                .controlSize(.large)
+                .buttonStyle(RecordButtonStyle(recording: model.isRecording))
                 .disabled(!model.canStartStop)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.isRecording ? model.elapsed : "Dabber")
-                        .font(.title2.weight(.semibold)).monospacedDigit()
+                    HStack(spacing: 6) {
+                        if model.isRecording {
+                            Image(systemName: "circle.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(RecordButtonStyle.red)
+                                .symbolEffect(.pulse, options: .repeating)
+                        }
+                        Text(model.isRecording ? model.elapsed : "Dabber")
+                            .font(.title2.weight(.semibold)).monospacedDigit()
+                    }
                     Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer()
@@ -124,6 +129,35 @@ struct RecordHeader: View {
         if let finishing = model.finishing { return finishing }
         if model.stopping || model.recordTitle.hasPrefix("Finalizing") { return model.recordTitle }
         return model.isRecording ? "Recording" : "Ready to record"
+    }
+}
+
+/// A solid, saturated button: the menu's translucent background washes out the system tint, so the colours are
+/// drawn here. Red to record; while recording, a deep red with a white square to stop.
+struct RecordButtonStyle: ButtonStyle {
+    static let red = Color(red: 1.0, green: 0.23, blue: 0.19)
+    static let deepRed = Color(red: 0.78, green: 0.06, blue: 0.08)
+
+    let recording: Bool
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 9)
+            .frame(minWidth: 118)
+            .background(
+                Capsule().fill(LinearGradient(
+                    colors: recording ? [Self.deepRed, Color(red: 0.55, green: 0.03, blue: 0.05)]
+                        : [Color(red: 1.0, green: 0.36, blue: 0.30), Self.red],
+                    startPoint: .top, endPoint: .bottom)))
+            .overlay(Capsule().strokeBorder(.white.opacity(0.28), lineWidth: 1))
+            .shadow(color: Self.red.opacity(enabled ? 0.5 : 0), radius: configuration.isPressed ? 2 : 7, y: 2)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .opacity(enabled ? 1 : 0.45)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
