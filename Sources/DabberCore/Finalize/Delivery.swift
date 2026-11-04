@@ -46,10 +46,11 @@ public enum Delivery {
     private static let lock = NSLock()
 
     public static func finishAndDeliver(
-        _ dir: URL, output: URL, mover: Mover = .live, speech: SpeechToText? = nil, cleanMics: Bool = false
+        _ dir: URL, output: URL, mover: Mover = .live, speech: SpeechToText? = nil, cleanMics: Bool = false,
+        micModel: MicModel? = nil
     ) throws -> URL {
         try lock.withLock {
-            let done = try Finalizer.finish(dir, speech: speech, cleanMics: cleanMics)
+            let done = try Finalizer.finish(dir, speech: speech, cleanMics: cleanMics, micModel: micModel)
             let moved: URL
             do {
                 moved = try deliver(done, into: output, mover: mover)
@@ -65,11 +66,12 @@ public enum Delivery {
 
     public static func recover(
         _ dirs: [URL], work: URL, output: URL, mover: Mover = .live,
-        speech: SpeechToText? = nil, cleanMics: Bool = false,
+        speech: SpeechToText? = nil, cleanMics: Bool = false, micModel: MicModel? = nil,
         onError: (URL, any Error) -> Void = { _, _ in }, onReport: (URL, FinalizeReport) -> Void = { _, _ in }
     ) -> String? {
         lock.withLock {
-            Finalizer.recoverAll(dirs: dirs, speech: speech, cleanMics: cleanMics, onError: onError, onReport: onReport)
+            Finalizer.recoverAll(
+                dirs: dirs, speech: speech, cleanMics: cleanMics, micModel: micModel, onError: onError, onReport: onReport)
             return deliverPending(from: work, to: output, mover: mover)
         }
     }

@@ -23,11 +23,11 @@ private func add(_ a: [Float], _ b: [Float]) -> [Float] { zip(a, b).map { $0 + $
 
 /// Feeds the cleaner the way the Finalizer does: primed with the first `latency` frames, then each chunk read
 /// `latency` frames ahead, the reference `shift` frames earlier than the mic.
-private func clean(_ cleaner: MicCleaner, mic: [Float], reference: [Float], shift: Int) -> [Float] {
+private func clean(_ cleaner: any MicCleaning, mic: [Float], reference: [Float], shift: Int) -> [Float] {
     func read(_ x: [Float], _ range: Range<Int>) -> [Float] {
         range.map { $0 >= 0 && $0 < x.count ? x[$0] : 0 }
     }
-    let latency = MicCleaner.latency
+    let latency = cleaner.latency
     func feed(_ ahead: Range<Int>) -> [Float] {
         let ref = cleaner.echo ? read(reference, (ahead.lowerBound - shift)..<(ahead.upperBound - shift)) : []
         return cleaner.process(mic: read(mic, ahead), reference: ref)
@@ -124,4 +124,70 @@ private func clean(_ cleaner: MicCleaner, mic: [Float], reference: [Float], shif
     let gap = 124_800..<139_200
     // About -19 dB in the simulation of this code.
     #expect(rms(out[gap]) < rms(mic[gap]) * 0.25)
+}
+
+/// Stands in for LocalVQE: answers whole blocks of 4096 samples, aligned with the input, like the real stream.
+private final class FakeModel: MicModelStream {
+    enum Mode { case passThrough, silence, failAfter(Int) }
+    let mode: Mode
+    let buffering = 4096 + 256
+    private var pending: [Float] = []
+    private var answered = 0
+    var references: [Float] = []
+
+    init(_ mode: Mode) { self.mode = mode }
+
+    struct Broken: Error {}
+
+    func enhance(mic: [Float], reference: [Float]) throws -> [Float] {
+        if case .failAfter(let n) = mode, answered >= n { throw Broken() }
+        pending += mic
+        references += reference
+        let n = pending.count / 4096 * 4096
+        let out = Array(pending.prefix(n))
+        pending.removeFirst(n)
+        answered += n
+        if case .silence = mode { return [Float](repeating: 0, count: n) }
+        return out
+    }
+}
+
+/// Wide-band noise: below and above 8 kHz.
+private func wideNoise(_ count: Int) -> [Float] { noise(count, seed: 11, amplitude: 0.3) }
+
+@Test func modelCleanerPassingEverythingGivesBackTheTrackExactlyOnTime() {
+    let mic = wideNoise(3 * 48_000)
+    let cleaner = ModelMicCleaner(echo: false, stream: FakeModel(.passThrough))
+    let out = clean(cleaner, mic: mic, reference: [], shift: 0)
+    #expect(out.count == mic.count)
+    // Lows from the model and highs from the track add up to the track (filter edges aside).
+    let error = zip(out, mic).dropFirst(1_000).dropLast(1_000).map { abs($0 - $1) }.max() ?? 1
+    #expect(error < 1e-3)
+}
+
+@Test func modelCleanerSilencesTheHighsWhereTheModelRemovedEverything() {
+    let mic = wideNoise(3 * 48_000)
+    let cleaner = ModelMicCleaner(echo: true, stream: FakeModel(.silence))
+    let out = clean(cleaner, mic: mic, reference: mic, shift: 0)
+    #expect(rms(out[48_000...]) < 0.001)
+}
+
+@Test func modelCleanerFeedsTheModelMacAudioAt16kHz() {
+    let mic = wideNoise(48_000)
+    let model = FakeModel(.passThrough)
+    let cleaner = ModelMicCleaner(echo: true, stream: model)
+    _ = clean(cleaner, mic: mic, reference: mic, shift: 0)
+    #expect(model.references.count > 15_000)
+    #expect(rms(model.references[4_000...]) > 0.05)
+}
+
+@Test func modelCleanerLeavesTheRestAsRecordedWhenTheModelFails() {
+    let mic = wideNoise(4 * 48_000)
+    let cleaner = ModelMicCleaner(echo: false, stream: FakeModel(.failAfter(16_000)))
+    let out = clean(cleaner, mic: mic, reference: [], shift: 0)
+    #expect(cleaner.failure != nil)
+    #expect(out.count == mic.count)
+    // Long after the failure the track goes through unchanged and on time.
+    let error = zip(out, mic).dropFirst(3 * 48_000).dropLast(1_000).map { abs($0 - $1) }.max() ?? 1
+    #expect(error < 1e-3)
 }

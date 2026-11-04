@@ -21,10 +21,12 @@ public enum Finalizer {
         let plans: [FinalizePlan]
     }
 
-    /// With `cleanMics`, every mono microphone track loses the echo of Mac audio and steady noise (`MicCleaner`)
-    /// before it is encoded, mixed and transcribed.
+    /// With `cleanMics`, every mono microphone track loses the echo of Mac audio and noise before it is encoded,
+    /// mixed and transcribed: through `micModel` (LocalVQE) when it can open a stream, otherwise through `MicCleaner`.
     @discardableResult
-    public static func run(_ dir: URL, speech: SpeechToText? = nil, cleanMics: Bool = false) throws -> FinalizeReport {
+    public static func run(
+        _ dir: URL, speech: SpeechToText? = nil, cleanMics: Bool = false, micModel: MicModel? = nil
+    ) throws -> FinalizeReport {
         var manifest = try SessionManifest.load(from: dir)
         let marker = dir.appendingPathComponent(transcribingMarker)
         let unfinished = max(0, (try? String(contentsOf: marker, encoding: .utf8)).flatMap { Int($0) } ?? 0)
@@ -72,11 +74,17 @@ public enum Finalizer {
             : []
         let lags = try references.isEmpty || cleaned.isEmpty
             ? [:] : echoLags(tracks, mics: cleaned, references: references, total: total)
+        var modelError: String?
         let cleaners = try cleaned.map { i in
-            let cleaning = Cleaning(track: i, cleaner: MicCleaner(echo: lags[i] != nil), shift: (lags[i] ?? 0) - MicCleaner.headroom)
+            let echo = lags[i] != nil
+            var cleaner: any MicCleaning = MicCleaner(echo: echo)
+            if let micModel, modelError == nil {
+                do { cleaner = ModelMicCleaner(echo: echo, stream: try micModel()) } catch { modelError = brief(error) }
+            }
+            let cleaning = Cleaning(track: i, cleaner: cleaner, shift: (lags[i] ?? 0) - cleaner.headroom)
             // The first `latency` frames only fill the cleaner; what it returns for them is silence before the start.
-            let first = try cleaning.input(tracks, references: references, ahead: 0..<MicCleaner.latency)
-            _ = cleaning.cleaner.process(mic: first.mic, reference: first.reference)
+            let first = try cleaning.input(tracks, references: references, ahead: 0..<cleaner.latency)
+            _ = cleaner.process(mic: first.mic, reference: first.reference)
             return cleaning
         }
         var start = 0
@@ -149,12 +157,17 @@ public enum Finalizer {
         }
         var echoDelays: [String: Double] = [:]
         for (i, lag) in lags { echoDelays[tracks[i].base] = Double(lag) * 1000 / Double(Timeline.rate) }
+        let failures = cleaners.compactMap { c in c.cleaner.failure.map { "\(tracks[c.track].base): \($0)" } }
+        let cleanedWith: String? = cleaners.isEmpty ? nil
+            : cleaners.contains(where: { $0.cleaner is ModelMicCleaner }) ? "LocalVQE"
+            : micModel == nil ? "MicCleaner" : "MicCleaner (LocalVQE: \(modelError ?? "not used"))"
         let report = FinalizeReport(
             totalFrames: total, gaps: gaps, driftMillis: drift, resampled: resampled, slidesError: slidesError,
             unreadable: unreadable.isEmpty ? nil : unreadable,
             transcriptError: transcriptError, subtitlesError: subtitlesError,
             cleanedMics: cleanMics ? cleaned.map { tracks[$0].base } : nil,
-            echoDelayMillis: echoDelays.isEmpty ? nil : echoDelays)
+            echoDelayMillis: echoDelays.isEmpty ? nil : echoDelays,
+            micCleaner: cleanedWith, micCleanerError: failures.isEmpty ? nil : failures.joined(separator: "; "))
         manifest.finalize = report
         try manifest.save(to: dir)
         for name in rendered where !unreadable.contains(name) {
@@ -166,12 +179,12 @@ public enum Finalizer {
         return report
     }
 
-    /// One microphone track being cleaned. Its input is read `MicCleaner.latency` frames ahead of the range being
+    /// One microphone track being cleaned. Its input is read the cleaner's `latency` frames ahead of the range being
     /// written, so that the cleaner's output lands on the same timeline; Mac audio is read `shift` frames earlier
     /// than the mic, so that the echo in the mic lines up with the start of the cleaner's filter.
     private struct Cleaning: Sendable {
         let track: Int
-        let cleaner: MicCleaner
+        let cleaner: any MicCleaning
         let shift: Int
 
         func input(_ tracks: [Track], references: [Int], ahead: Range<Int>) throws -> (mic: [Float], reference: [Float]) {
@@ -224,8 +237,10 @@ public enum Finalizer {
         _ cleaners: [Cleaning], _ tracks: [Track], references: [Int], range: Range<Int>
     ) throws -> [[Float]] {
         guard !cleaners.isEmpty else { return [] }
-        let ahead = (range.lowerBound + MicCleaner.latency)..<(range.upperBound + MicCleaner.latency)
-        let inputs = try cleaners.map { try $0.input(tracks, references: references, ahead: ahead) }
+        let inputs = try cleaners.map { c in
+            let ahead = (range.lowerBound + c.cleaner.latency)..<(range.upperBound + c.cleaner.latency)
+            return try c.input(tracks, references: references, ahead: ahead)
+        }
         let outputs = Mutex([[Float]](repeating: [], count: cleaners.count))
         DispatchQueue.concurrentPerform(iterations: cleaners.count) { j in
             let output = cleaners[j].cleaner.process(mic: inputs[j].mic, reference: inputs[j].reference)
@@ -307,8 +322,10 @@ public enum Finalizer {
         return (Transcript.merge(lines), failed.map { "\($0.track): \($0.error.prefix(each))" }.joined(separator: "; "))
     }
 
-    public static func finish(_ dir: URL, speech: SpeechToText? = nil, cleanMics: Bool = false) throws -> URL {
-        try run(dir, speech: speech, cleanMics: cleanMics)
+    public static func finish(
+        _ dir: URL, speech: SpeechToText? = nil, cleanMics: Bool = false, micModel: MicModel? = nil
+    ) throws -> URL {
+        try run(dir, speech: speech, cleanMics: cleanMics, micModel: micModel)
         return try rename(dir)
     }
 
@@ -361,12 +378,12 @@ public enum Finalizer {
 
     @discardableResult
     public static func recoverAll(
-        dirs: [URL], speech: SpeechToText? = nil, cleanMics: Bool = false, onError: (URL, Error) -> Void = { _, _ in }, onReport: (URL, FinalizeReport) -> Void = { _, _ in }
+        dirs: [URL], speech: SpeechToText? = nil, cleanMics: Bool = false, micModel: MicModel? = nil, onError: (URL, Error) -> Void = { _, _ in }, onReport: (URL, FinalizeReport) -> Void = { _, _ in }
     ) -> [URL] {
         var done: [URL] = []
         for dir in dirs where needsRecovery(dir) {
             do {
-                let report = try run(dir, speech: speech, cleanMics: cleanMics)
+                let report = try run(dir, speech: speech, cleanMics: cleanMics, micModel: micModel)
                 let named = try rename(dir)
                 onReport(named, report)
                 done.append(named)

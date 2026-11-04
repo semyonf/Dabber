@@ -32,7 +32,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         names: UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String] ?? [:],
         persist: { UserDefaults.standard.set(Array($0).sorted(), forKey: enabledKey) },
         persistNames: { UserDefaults.standard.set($0, forKey: namesKey) },
-        finalize: { try Delivery.finishAndDeliver($0, output: $1, speech: speech, cleanMics: cleanMicsOn) },
+        finalize: {
+            try Delivery.finishAndDeliver(
+                $0, output: $1, speech: speech, cleanMics: cleanMicsOn, micModel: LocalVqeModel.shared.model)
+        },
         calendar: EventKitCalendar(),
         outputFolder: UserDefaults.standard.string(forKey: outputKey).map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? AppPaths.recordingsRoot,
@@ -89,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         ParakeetSpeech.shared.markLoads(in: AppPaths.supportRoot)
         if Self.transcribeOn { ParakeetSpeech.shared.prepare() }
+        if Self.cleanMicsOn { LocalVqeModel.shared.prepare() }
         let pending = Finalizer.sessionFolders(root: work)
         Self.model.finishBeforeQuit(Task.detached(priority: .utility) {
             ParakeetSpeech.removeStaleTempFiles()
@@ -98,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             let failure = Delivery.recover(
                 pending, work: work, output: output, speech: speech, cleanMics: Self.cleanMicsOn,
+                micModel: LocalVqeModel.shared.model,
                 onError: { dir, error in Task { @MainActor in Self.model.recoveryFailed(dir, error) } },
                 onReport: { dir, report in Task { @MainActor in Self.model.recovered(dir, report) } })
             await MainActor.run { Self.model.deliveryDone(failure: failure) }

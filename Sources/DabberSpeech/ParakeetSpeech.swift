@@ -312,7 +312,7 @@ public final class ParakeetSpeech: @unchecked Sendable {
 /// Finalizer is synchronous; this waits in it for the async FluidAudio call. It parks a cooperative-pool thread
 /// while another task does the work. That is safe because Delivery.lock lets one transcription run at a time,
 /// so at most one or two pool threads are parked.
-private func blocking<T: Sendable>(_ body: @escaping @Sendable () async throws -> T) throws -> T {
+func blocking<T: Sendable>(_ body: @escaping @Sendable () async throws -> T) throws -> T {
     let done = DispatchSemaphore(value: 0)
     nonisolated(unsafe) var result: Result<T, any Error>?
     Task.detached(priority: Task.currentPriority) {

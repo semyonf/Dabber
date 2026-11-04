@@ -17,7 +17,7 @@ Dabber is a small macOS menu bar app that records what your Mac plays and what y
   video: the mix plays, and each change of the screen stays in the picture until the next change. No screen video
   is recorded. The screenshot can be the whole screen, one window (kept while you switch desktops) or an area.
 - **Clean microphones** (on by default): after Stop, the microphone tracks lose the call audio that the mic heard from
-  the Mac's speakers (echo) and steady background noise.
+  the Mac's speakers (echo), background noise and the room's reverb, with a small neural model on your Mac.
 - **Transcript** (on your Mac): text and subtitles for every recording, with «Я» and «Собеседники».
 - **Names from the calendar**: a recording is named after the calendar event that is on (or starts within 15 minutes).
   You can change the name while recording.
@@ -232,17 +232,23 @@ clean in the Mac audio track and late, with the room's echo, in the microphone t
 (under the sources, on by default), Dabber removes this from every microphone track after Stop, before the files are
 encoded, mixed and transcribed:
 
-- **Echo of Mac audio.** Dabber measures how late the microphone hears Mac audio, then an adaptive filter (the same
-  approach as the echo cancellers of call apps) learns how the sound reaches the mic and subtracts it. What remains
-  after the filter is taken down further. When you speak at the same time as the other side, your voice stays, though
-  it may sound slightly thinner in those moments. A microphone that does not hear Mac audio (headphones) gets only the
-  noise reduction.
-- **Steady noise**: fans, hum, air conditioning, the rumble of traffic, and anything below about 70 Hz. Short sharp
-  sounds (a knock, a keyboard click, a door) are not steady noise and stay mostly as they were.
+- **Echo of Mac audio.** Dabber measures how late the microphone hears Mac audio and gives both to
+  [LocalVQE](https://github.com/localai-org/LocalVQE), a neural model for echo cancellation, noise suppression and
+  dereverberation. While only the other side speaks, the microphone track goes quiet. When you speak at the same time,
+  your voice stays. A microphone that does not hear Mac audio (headphones) gets only the noise and reverb removal.
+- **Noise and room**: fans, hum, keyboard, traffic, and the echo of the room in your own voice.
 
-The filter needs a few seconds of the other side speaking to learn the room, so the very first words of the call
-may keep a little echo. `session.json` lists the cleaned tracks (`cleanedMics`) and the measured delay
-(`echoDelayMillis`). The switch is read when a recording is finished, so it applies to recordings stopped after the
+The model works on 16 kHz sound, that is up to 8 kHz. What a good microphone records above that is kept from the
+original track wherever the model kept your voice, and removed with the rest everywhere else. The model (about 19 MB)
+is downloaded from Hugging Face in the background when the app starts with the switch on, or when you turn it on, and
+is kept in `~/Library/Application Support/FluidAudio/Models/`. A recording stopped before it is loaded (the first one
+after installing, or one made offline) is cleaned by the older built-in filter instead: an adaptive echo filter and
+steady noise reduction, which leave some echo and a "bubbly" trace of it. Cleaning takes about a minute or two per hour
+of each microphone on an Apple Silicon Mac.
+
+`session.json` lists the cleaned tracks (`cleanedMics`), the measured delay (`echoDelayMillis`) and what cleaned them
+(`micCleaner`: `LocalVQE`, or `MicCleaner` with the reason the model was not used). If the model fails part way,
+the rest of that track is left as recorded and `micCleanerError` says so. The switch is read when a recording is finished, so it applies to recordings stopped after the
 change. Turn it off to keep the microphone tracks exactly as recorded: the cleaning cannot be undone in the finished files.
 
 ### Transcript and subtitles
@@ -411,4 +417,5 @@ Audio Inc., licensed under GPL-3.0. Its source, license and the list of local ch
 
 Speech recognition uses [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0) and the NVIDIA
 [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model (CC-BY-4.0), converted to CoreML by
-FluidInference.
+FluidInference. Microphone cleaning uses the [LocalVQE](https://github.com/localai-org/LocalVQE) model (Apache-2.0) by
+the LocalAI team, converted to CoreML by FluidInference.

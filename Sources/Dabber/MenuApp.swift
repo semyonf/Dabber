@@ -1,5 +1,6 @@
 import AppKit
 import DabberCore
+import DabberSpeech
 import SwiftUI
 
 struct MenuApp: App {
@@ -102,7 +103,8 @@ struct RecordingSection: View {
                 Text(line).font(.caption).foregroundStyle(speechFailed ? .orange : .secondary)
             }
             Toggle("Clean up microphones", isOn: $cleanMics)
-                .help("After Stop, remove the echo of Mac audio and steady background noise from the microphone tracks")
+                .help("After Stop, remove the echo of Mac audio, background noise and room echo from the microphone tracks")
+                .onChange(of: cleanMics) { _, on in if on { LocalVqeModel.shared.prepare() } }
             if model.isRecording {
                 HStack {
                     Text("Name").font(.caption).foregroundStyle(.secondary)

@@ -79,14 +79,19 @@ public struct FinalizeReport: Codable, Equatable, Sendable {
     public var unreadable: [String]?
     public var transcriptError: String?
     public var subtitlesError: String?
-    /// Microphone tracks that went through `MicCleaner`; nil when cleaning was off.
+    /// Microphone tracks that were cleaned; nil when cleaning was off.
     public var cleanedMics: [String]?
     /// Per cleaned track, how late the mic heard Mac audio. A track without a clear echo is not listed.
     public var echoDelayMillis: [String: Double]?
+    /// What cleaned them: "LocalVQE", or "MicCleaner" with the reason the model was not used.
+    public var micCleaner: String?
+    /// Tracks on which the model failed part way; the rest of such a track is left as recorded.
+    public var micCleanerError: String?
     public init(
         totalFrames: Int, gaps: [GapRecord], driftMillis: [String: Double], resampled: [String], slidesError: String? = nil,
         unreadable: [String]? = nil, transcriptError: String? = nil, subtitlesError: String? = nil,
-        cleanedMics: [String]? = nil, echoDelayMillis: [String: Double]? = nil
+        cleanedMics: [String]? = nil, echoDelayMillis: [String: Double]? = nil,
+        micCleaner: String? = nil, micCleanerError: String? = nil
     ) {
         self.totalFrames = totalFrames
         self.gaps = gaps
@@ -98,6 +103,8 @@ public struct FinalizeReport: Codable, Equatable, Sendable {
         self.subtitlesError = subtitlesError
         self.cleanedMics = cleanedMics
         self.echoDelayMillis = echoDelayMillis
+        self.micCleaner = micCleaner
+        self.micCleanerError = micCleanerError
     }
 }
 
