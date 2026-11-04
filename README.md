@@ -378,6 +378,9 @@ Your recordings in the output folder are not touched.
 - Run tests with `scripts/test.sh`. With only the Command Line Tools installed, plain `swift test` cannot find the
   Swift Testing macro plugin; the script passes its path.
 - `scripts/build-app.sh` builds `build/Dabber.app` without installing it.
+- `scripts/make-echo-tests.py` builds test recordings for microphone cleaning in `build/echo-tests`: a call without
+  headphones in three simulated rooms, with the Mac audio track, the microphone track and what a perfect cleaner would
+  leave of it. Needs Python with `numpy scipy soundfile pyarrow`; downloads 9 MB of LibriSpeech speech on first run.
 - `docs/` holds the design specs, implementation plans and the results of hardware experiments ("spikes") made
   while building Dabber.
 
