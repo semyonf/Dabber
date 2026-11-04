@@ -33,7 +33,7 @@ Fill in one row per test. "Other side in computer audio" / "My voice in mic": ye
 
 | App (version) | Route | Other side in computer audio | My voice in mic | Formats (app / mic) | Gaps | Notes |
 |---|---|---|---|---|---|---|
-| YouTube or Music (control) | speaker | | | | | |
+| Instagram video (control, no call), 2026-11-04, spike build | speaker | yes, about -20 dBFS | yes, quiet: syllables -30…-45 dBFS over a -48 dBFS floor | 44.1 kHz 2 ch 16-bit int big-endian / 48 kHz 1 ch 16-bit int | none | see "Control runs" |
 | Zoom | speaker | | | | | |
 | Zoom | headphones | | | | | |
 | Google Meet (app) | speaker | | | | | |
@@ -41,6 +41,17 @@ Fill in one row per test. "Other side in computer audio" / "My voice in mic": ye
 | Telegram | speaker | | | | | |
 | FaceTime | speaker | | | | | |
 | Phone call over iPhone (Continuity) | speaker | | | | | |
+
+### Control runs (2026-11-04, spike build, no call)
+
+- Run 1 (31 s): app audio only, no `mic` track at all: the Microphone button of the broadcast sheet was off. With
+  it off ReplayKit sends no microphone buffers, so "no microphone" after a recording almost always means that button.
+- Run 2 (15 s, Microphone on): both tracks, no gaps. ReplayKit keeps sending app audio while nothing plays, as
+  digital zeros, not as a pause. While the video played through the speaker, the mic rose to -22…-28 dBFS (louder than
+  the voice) and holds a copy of the app audio about 16 ms late (normalized correlation 0.5): the echo that microphone
+  cleaning is meant to remove.
+- Screenshots: about 50 frames per second arrive, one every 2 s was kept, as planned.
+- Not answered yet: whether call apps let their sound in and leave the microphone to the broadcast.
 
 Also note: did the broadcast stop by itself (extension memory limit), and does the call app show any warning.
 
