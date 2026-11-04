@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 
 public enum ExclusionList {
@@ -63,3 +64,4 @@ public struct AppEntry: Sendable, Equatable, Identifiable {
         return out
     }
 }
+#endif

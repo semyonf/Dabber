@@ -402,6 +402,9 @@ Your recordings in the output folder are not touched.
 - `scripts/make-echo-tests.py` builds test recordings for microphone cleaning in `build/echo-tests`: a call without
   headphones in three simulated rooms, with the Mac audio track, the microphone track and what a perfect cleaner would
   leave of it. Needs Python with `numpy scipy soundfile pyarrow`; downloads 9 MB of LibriSpeech speech on first run.
+- `iPad/`: Dabber for iPad (experimental), an Xcode project generated with XcodeGen; see `iPad/README.md`. It records
+  through a screen broadcast and finishes recordings with the same `DabberCore`; on iOS the package builds only the
+  parts that do not touch Core Audio devices (`#if os(macOS)` around the rest).
 - `docs/` holds the design specs, implementation plans and the results of hardware experiments ("spikes") made
   while building Dabber.
 

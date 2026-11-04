@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import Observation
 
@@ -607,3 +608,4 @@ public final class RecorderModel {
         tick()
     }
 }
+#endif

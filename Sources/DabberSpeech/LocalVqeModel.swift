@@ -52,6 +52,18 @@ public final class LocalVqeModel: @unchecked Sendable {
         }
     }
 
+    /// Starts the load and waits for it, at most `seconds`: for a device that finishes recordings right after
+    /// launch (the iPad app), where the first recording would otherwise get the older cleaner.
+    public func waitUntilLoaded(seconds: Double) async {
+        prepare()
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            let (ready, busy) = lock.withLock { (manager != nil, loading) }
+            if ready || !busy { return }
+            do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+        }
+    }
+
     /// For `Finalizer`: a stream for one track.
     public var model: MicModel { { try self.open() } }
 

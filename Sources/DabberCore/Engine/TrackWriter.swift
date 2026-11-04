@@ -1,3 +1,4 @@
+#if os(macOS)
 import AVFoundation
 import AudioToolbox
 import CoreAudio
@@ -235,3 +236,4 @@ public final class TrackWriter: @unchecked Sendable {
         notifySegments()
     }
 }
+#endif

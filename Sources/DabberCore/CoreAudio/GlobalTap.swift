@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Foundation
 
@@ -54,3 +55,4 @@ public final class GlobalTap: Sendable {
         AudioHardwareDestroyProcessTap(tapID)
     }
 }
+#endif

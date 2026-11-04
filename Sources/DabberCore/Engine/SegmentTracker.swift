@@ -1,3 +1,4 @@
+#if os(macOS)
 public enum Boundary: Equatable, Sendable {
     case continues
     case gap(frames: Double)
@@ -27,3 +28,4 @@ public struct SegmentTracker: Sendable {
         return abs(jump) <= 1 ? .continues : .gap(frames: jump)
     }
 }
+#endif

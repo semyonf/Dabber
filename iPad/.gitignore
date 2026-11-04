@@ -1,5 +1,5 @@
 Local.xcconfig
-DabberSpike.xcodeproj/
+DabberPad.xcodeproj/
 App/Info.plist
 App/App.entitlements
 Broadcast/Info.plist

@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Synchronization
 
@@ -73,3 +74,4 @@ public final class RingBuffer: @unchecked Sendable {
         return true
     }
 }
+#endif

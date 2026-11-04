@@ -1,6 +1,7 @@
 # Spike: can an iPad record a call?
 
-Date: 2026-11-04. Code: `iPad/BroadcastSpike` (an iPad app with a ReplayKit broadcast upload extension).
+Date: 2026-11-04. Code: `iPad/` (Dabber for iPad: an app with a ReplayKit broadcast upload extension). The first
+version was built before this test could be run; the results decide whether it stays.
 
 On a Mac, Dabber records what the Mac plays through a Core Audio tap. iPadOS gives an app no such tap; the only way to
 hear other apps is a system broadcast (Control Center > Screen Recording, long press, pick an app). The broadcast
@@ -8,44 +9,29 @@ extension then receives three streams: app audio (`audioApp`), the microphone (`
 button on) and the screen. Whether call apps let their sound into that stream, and whether the microphone keeps working
 while a call app uses it, decides if an iPad Dabber makes sense. That is what this spike finds out.
 
-## What the spike records
+## What is tested
 
-Per broadcast, a folder in the App Group container with:
-- `app-1.caf`, `mic-1.caf`: each stream exactly as ReplayKit delivers it; a new file (`-2`, `-3`) whenever its format
-  changes, for example when a call starts;
-- `frames/`: a half-size JPEG of the screen every 2 s;
-- `summary.json`: per track the formats, buffers, length, timestamp gaps over 50 ms, and the RMS level of every second
-  of the broadcast (`-120` = nothing arrived in that second); screen frames received and saved; events;
-- `log.txt`: the events as they happened.
-
-The app lists the broadcasts and, for each, shows the summary with a one-character-per-second loudness line
-(`·` = below -60 dBFS), plays the files, and exports audio + summary + log through the share sheet.
-
-## Build and install
-
-1. On the Mac: Xcode 16 or later, `brew install xcodegen`.
-2. `iPad/BroadcastSpike/make-project.sh TEAM_ID` (Team ID: developer.apple.com > Account > Membership details).
-   An optional second argument changes the bundle ID prefix (default `pro.vlads.dabber`). The script writes
-   `Local.xcconfig`, generates `DabberSpike.xcodeproj` and opens it.
-3. Connect the iPad (Developer Mode on: Settings > Privacy & Security > Developer Mode), pick it as the run
-   destination, run the `DabberSpike` scheme. Automatic signing registers both bundle IDs and the App Group
-   `group.<prefix>.spike`. If Xcode complains about the App Group, add it under Signing & Capabilities > App Groups
-   for both targets.
+The iPad app itself (`iPad/`, see its README for building). It writes each broadcast like a Mac recording
+(`computer audio.segNNN.caf` for the sound of other apps, `mic - iPad microphone.segNNN.caf`, `frames/`,
+`session.json`) and finishes it in the app with the Mac's Finalizer. After finishing, the app warns when one of the
+two streams never arrived ("no sound of other apps arrived", "no microphone"). `session.json` in the finished folder
+lists every segment (a new one starts at each gap of more than 20 ms or format change) with its `sourceRate` and
+`sourceChannels`, which is the format ReplayKit delivered.
 
 ## Each test
 
-1. In Dabber Spike tap the round button, turn **Microphone** on at the bottom of the sheet, Start Broadcast.
+1. In Dabber tap the round button, turn **Microphone** on at the bottom of the sheet, Start Broadcast.
 2. Switch to the call app and make a call of about a minute **through the iPad speaker**, then about a minute with
    headphones if possible. Talk during both; let the other side talk too.
-3. Stop the broadcast (red status bar or Control Center), open Dabber Spike, open the newest recording.
-4. Note for both tracks: formats, silent seconds, and listen: is the other side in `app`, is your voice in `mic`.
-   Export the folder if something looks odd.
+3. Stop the broadcast (red indicator or Control Center) and open Dabber; it finishes the recording.
+4. Note any warning Dabber shows, then listen to `computer audio.m4a` (the other side) and `mic - iPad
+   microphone.m4a` (you) in the recording. Share `session.json` if something looks odd.
 
 ## Results
 
-Fill in one row per test. "Other side in app" / "My voice in mic": yes / no / partly (and when it stopped).
+Fill in one row per test. "Other side in computer audio" / "My voice in mic": yes / no / partly (and when it stopped).
 
-| App (version) | Route | Other side in app | My voice in mic | Formats (app / mic) | Gaps | Notes |
+| App (version) | Route | Other side in computer audio | My voice in mic | Formats (app / mic) | Gaps | Notes |
 |---|---|---|---|---|---|---|
 | YouTube or Music (control) | speaker | | | | | |
 | Zoom | speaker | | | | | |
@@ -60,6 +46,6 @@ Also note: did the broadcast stop by itself (extension memory limit), and does t
 
 ## Decision
 
-- Other side and my voice recorded in the main call apps: an iPad Dabber is worth building (estimate in the chat:
-  1–2 weeks for a first version).
-- Other side missing in most apps: an iPad Dabber could only record the microphone and slides; not worth it.
+- Other side and my voice recorded in the main call apps: keep the iPad app and polish it.
+- Other side missing in most apps: an iPad Dabber can only record the microphone and slides; drop it or keep it
+  for that alone.

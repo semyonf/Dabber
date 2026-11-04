@@ -1,3 +1,4 @@
+#if os(macOS)
 public enum BackupPolicy {
     public static let settleSeconds = 2.5
     public static let retrySeconds = 2.0
@@ -15,3 +16,4 @@ public enum BackupPolicy {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Synchronization
 
@@ -277,3 +278,4 @@ public enum MicInputs {
             })
     }
 }
+#endif

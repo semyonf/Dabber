@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Foundation
 import Synchronization
@@ -312,3 +313,4 @@ public final class FeedEngine: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + delay, execute: item)
     }
 }
+#endif

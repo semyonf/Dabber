@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 
 public struct InputDevice: Sendable, Equatable {
@@ -96,3 +97,4 @@ public func audioProcesses() throws -> [AudioProcess] {
             isRunningOutput: running != 0)
     }
 }
+#endif

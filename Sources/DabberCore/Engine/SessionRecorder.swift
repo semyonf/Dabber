@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 
 public enum RecorderError: Error, CustomStringConvertible {
@@ -438,3 +439,4 @@ public final class SessionRecorder: @unchecked Sendable {
         stop()
     }
 }
+#endif

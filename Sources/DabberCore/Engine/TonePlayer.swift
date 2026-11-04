@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Foundation
 
@@ -39,3 +40,4 @@ public final class TonePlayer: @unchecked Sendable {
         }
     }
 }
+#endif
