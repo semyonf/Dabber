@@ -35,7 +35,11 @@ that do not touch Core Audio devices are built.
    your microphone, plus the mix, transcript and slides video.
 
 Settings in the app: Record slides (a screenshot every 2 s while the screen changes), Transcribe, Clean up microphone,
-Name recordings from the calendar.
+Name recordings from the calendar, and **Save to**: Choose… opens the Files sheet to pick any folder (On My iPad,
+iCloud Drive, an external drive, another provider in Files); Reset goes back to On My iPad › Dabber › Recordings.
+Recordings are finished on the iPad and then copied there (checked against the original before it is removed). If
+the folder cannot be reached at that moment (drive removed, offline), the recording is saved On My iPad › Dabber
+instead and the app says so. The list in the app shows the recordings in the chosen folder.
 
 ## What does not exist on iPad
 

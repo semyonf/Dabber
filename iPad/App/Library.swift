@@ -5,18 +5,22 @@ import Foundation
 import Observation
 import UIKit
 
-/// Finishes the recordings the broadcast extension left in the App Group and keeps the list of finished ones,
-/// which live in Documents/Recordings (visible in the Files app under On My iPad > Dabber).
+/// Finishes the recordings the broadcast extension left in the App Group and keeps the list of finished ones. They go
+/// to the folder chosen under Settings (any folder of the Files app: On My iPad, iCloud Drive, an external drive),
+/// or by default to Documents/Recordings, visible in the Files app under On My iPad > Dabber.
 @MainActor @Observable
 final class Library {
     static let transcribeKey = "transcribe"
     static let cleanMicsKey = "cleanMics"
     static let calendarKey = "calendarNames"
+    static let folderKey = "outputFolderBookmark"
 
     private(set) var recordings: [URL] = []
     private(set) var recordingNow = false
     private(set) var finishing: String?
     private(set) var notes: [String] = []
+    /// The chosen folder while Dabber may use it (security-scoped access is held until another is chosen).
+    private(set) var folder: URL?
     private var running = false
     /// Folders already tried in this run: one that failed stays in the shared folder and is tried again next launch.
     private var attempted: Set<String> = []
@@ -26,9 +30,63 @@ final class Library {
         set { Group.defaults.set(newValue, forKey: Group.slidesKey) }
     }
 
-    static var output: URL {
+    static var defaultOutput: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Recordings", isDirectory: true)
+    }
+
+    /// Where finished recordings go now: the chosen folder if it can be reached, otherwise On My iPad.
+    var output: URL { folder.flatMap { Self.reachable($0) ? $0 : nil } ?? Self.defaultOutput }
+
+    var folderName: String { folder.map { FileManager.default.displayName(atPath: $0.path) } ?? "On My iPad › Dabber" }
+
+    /// Remembers a folder picked in the Files sheet and uses it from now on.
+    func setFolder(_ url: URL) {
+        guard url.startAccessingSecurityScopedResource() else {
+            notes = ["Dabber was not allowed to use \(url.lastPathComponent)."]
+            return
+        }
+        do {
+            let bookmark = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
+            UserDefaults.standard.set(bookmark, forKey: Self.folderKey)
+        } catch {
+            url.stopAccessingSecurityScopedResource()
+            notes = ["Dabber cannot remember \(url.lastPathComponent): \(error.localizedDescription)"]
+            return
+        }
+        folder?.stopAccessingSecurityScopedResource()
+        folder = url
+        notes = []
+        refresh()
+    }
+
+    /// Back to On My iPad › Dabber › Recordings.
+    func resetFolder() {
+        folder?.stopAccessingSecurityScopedResource()
+        folder = nil
+        UserDefaults.standard.removeObject(forKey: Self.folderKey)
+        refresh()
+    }
+
+    /// The folder chosen in an earlier run, if it still resolves.
+    private func restoreFolder() {
+        guard let data = UserDefaults.standard.data(forKey: Self.folderKey) else { return }
+        var stale = false
+        guard let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &stale),
+              url.startAccessingSecurityScopedResource()
+        else {
+            notes = ["The folder for recordings could not be opened; they are saved On My iPad until you choose it again."]
+            return
+        }
+        folder = url
+        if stale, let fresh = try? url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil) {
+            UserDefaults.standard.set(fresh, forKey: Self.folderKey)
+        }
+    }
+
+    nonisolated private static func reachable(_ url: URL) -> Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
     }
 
     nonisolated static var transcribeOn: Bool { UserDefaults.standard.object(forKey: transcribeKey) as? Bool ?? true }
@@ -36,7 +94,8 @@ final class Library {
     nonisolated static var calendarOn: Bool { UserDefaults.standard.object(forKey: calendarKey) as? Bool ?? true }
 
     func launched() {
-        try? FileManager.default.createDirectory(at: Self.output, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: Self.defaultOutput, withIntermediateDirectories: true)
+        restoreFolder()
         if let sessions = Group.sessions {
             try? FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
         }
@@ -48,8 +107,8 @@ final class Library {
     /// Looks at the shared folder: a recording still being written shows as "Recording"; any other is finished.
     func refresh() {
         recordings = ((try? FileManager.default.contentsOfDirectory(
-            at: Self.output, includingPropertiesForKeys: [.creationDateKey])) ?? [])
-            .filter(\.hasDirectoryPath)
+            at: output, includingPropertiesForKeys: [.creationDateKey])) ?? [])
+            .filter { $0.hasDirectoryPath && FileManager.default.fileExists(atPath: $0.appendingPathComponent(SessionManifest.fileName).path) }
             .sorted { Self.created($0) > Self.created($1) }
         guard let sessions = Group.sessions else {
             notes = ["Dabber cannot reach its shared folder (App Group \(Group.id))."]
@@ -73,12 +132,16 @@ final class Library {
         notes = []
         UIApplication.shared.isIdleTimerDisabled = true
         let background = UIApplication.shared.beginBackgroundTask(withName: "Finish recordings")
-        let output = Self.output
+        let output = self.output
+        let unreachable = folder.flatMap { output == $0 ? nil : $0.lastPathComponent }
         Task.detached(priority: .userInitiated) {
             let speech: SpeechToText? = Self.transcribeOn ? ParakeetSpeech.shared.transcribe : nil
             if speech != nil { await ParakeetSpeech.shared.waitIfCached(seconds: 60) }
             if Self.cleanMicsOn { await LocalVqeModel.shared.waitUntilLoaded(seconds: 30) }
             var notes: [String] = []
+            if let unreachable {
+                notes.append("\(unreachable) is not available (drive removed or offline?): saved On My iPad › Dabber instead.")
+            }
             for dir in dirs {
                 guard Finalizer.needsRecovery(dir) else {
                     // Nothing arrived at all (no audio files), or a folder finished earlier but not delivered.

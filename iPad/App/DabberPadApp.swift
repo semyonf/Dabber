@@ -2,6 +2,7 @@ import DabberCore
 import DabberSpeech
 import ReplayKit
 import SwiftUI
+import UniformTypeIdentifiers
 import UserNotifications
 
 @main
@@ -25,6 +26,7 @@ struct MainView: View {
     @AppStorage(Library.transcribeKey) private var transcribe = true
     @AppStorage(Library.cleanMicsKey) private var cleanMics = true
     @AppStorage(Library.calendarKey) private var calendar = true
+    @State private var choosingFolder = false
 
     var body: some View {
         NavigationStack {
@@ -60,6 +62,24 @@ struct MainView: View {
                         .onChange(of: cleanMics) { _, on in if on { LocalVqeModel.shared.prepare() } }
                     Toggle("Name recordings from the calendar", isOn: $calendar)
                         .onChange(of: calendar) { _, on in if on { library.askForCalendar() } }
+                    HStack {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Save to")
+                                Text(library.folderName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                        } icon: {
+                            Image(systemName: "folder")
+                        }
+                        Spacer()
+                        if library.folder != nil {
+                            Button("Reset") { library.resetFolder() }.buttonStyle(.borderless)
+                        }
+                        Button("Choose…") { choosingFolder = true }.buttonStyle(.borderless)
+                    }
+                    .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
+                        if case .success(let url) = result { library.setFolder(url) }
+                    }
                 }
                 Section {
                     if library.recordings.isEmpty { Text("None yet").foregroundStyle(.secondary) }
@@ -72,7 +92,9 @@ struct MainView: View {
                 } header: {
                     Text("Recordings")
                 } footer: {
-                    Text("Also in the Files app: On My iPad › Dabber › Recordings.")
+                    Text(library.folder == nil
+                        ? "Also in the Files app: On My iPad › Dabber › Recordings."
+                        : "Also in the Files app, in \(library.folderName).")
                 }
             }
             .navigationTitle("Dabber")
