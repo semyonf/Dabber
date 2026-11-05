@@ -364,15 +364,26 @@ struct LiveTranscriptView: View {
                         ?? "Listening… a line appears about 8 s after it is said.")
                         .font(.caption).foregroundStyle(.secondary)
                     if floating { Spacer() }
+                } else if !floating {
+                    // In the menu: the last lines without a scroll view. The menu window takes its content's ideal
+                    // height, and a ScrollView with only a maximum height has an ideal height of zero there, so the
+                    // lines were hidden. The whole history is in the pinned panel.
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(lines.suffix(6)) { line in row(line) }
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    if let status = LiveTranscriber.shared.status {
+                        Text("Live transcript \(status)").font(.caption).foregroundStyle(.orange)
+                    }
                 } else {
                     ScrollViewReader { proxy in
                         ScrollView {
-                            VStack(alignment: .leading, spacing: floating ? 12 : 6) {
+                            VStack(alignment: .leading, spacing: 12) {
                                 ForEach(lines) { line in row(line).id(line.id) }
                             }
                             .padding(.trailing, 6)
                         }
-                        .frame(maxHeight: floating ? .infinity : 200)
+                        .frame(maxHeight: .infinity)
                         .onAppear { proxy.scrollTo(lines.last?.id, anchor: .bottom) }
                         .onChange(of: lines.last?.id) { _, last in
                             withAnimation { proxy.scrollTo(last, anchor: .bottom) }
