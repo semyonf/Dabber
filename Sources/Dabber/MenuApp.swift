@@ -303,9 +303,8 @@ struct FooterRow: View {
             }
             .disabled(model.lastSessionDir == nil)
             Spacer()
-            Button(AppPaths.version) { showAbout() }
-                .foregroundStyle(.secondary)
-                .help("About Dabber")
+            Button("About") { showAbout() }
+                .help("Version and code name")
             Button("Quit") { NSApplication.shared.terminate(nil) }
         }
         .buttonStyle(.borderless)
