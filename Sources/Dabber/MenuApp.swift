@@ -303,10 +303,22 @@ struct FooterRow: View {
             }
             .disabled(model.lastSessionDir == nil)
             Spacer()
+            Button(AppPaths.version) { showAbout() }
+                .foregroundStyle(.secondary)
+                .help("About Dabber")
             Button("Quit") { NSApplication.shared.terminate(nil) }
         }
         .buttonStyle(.borderless)
         .font(.caption)
+    }
+
+    /// The standard About window, with the code name in the version line: "Version 1.0.0 “Screaming Ant” (2)".
+    private func showAbout() {
+        let info = Bundle.main.infoDictionary
+        let number = info?["CFBundleShortVersionString"] as? String ?? "dev"
+        let name = AppPaths.codename.map { " “\($0)”" } ?? ""
+        NSApp.activate()
+        NSApp.orderFrontStandardAboutPanel(options: [.applicationVersion: number + name])
     }
 
     private func chooseFolder() {
