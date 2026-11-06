@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Foundation
 import Synchronization
@@ -63,3 +64,4 @@ public final class FeedRenderer: @unchecked Sendable {
             && Int(b.mDataByteSize) == frames * Int(b.mNumberChannels) * MemoryLayout<Float>.size
     }
 }
+#endif

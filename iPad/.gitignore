@@ -1,0 +1,6 @@
+Local.xcconfig
+DabberPad.xcodeproj/
+App/Info.plist
+App/App.entitlements
+Broadcast/Info.plist
+Broadcast/Broadcast.entitlements

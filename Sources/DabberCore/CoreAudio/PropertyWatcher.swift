@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Foundation
 
@@ -32,3 +33,4 @@ public final class PropertyWatcher: @unchecked Sendable {
         registrations.removeAll()
     }
 }
+#endif

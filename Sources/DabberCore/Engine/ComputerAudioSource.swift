@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Foundation
 
@@ -26,3 +27,4 @@ public final class ComputerAudioSource: CaptureSource, @unchecked Sendable {
         tap = nil
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Foundation
 
@@ -24,3 +25,4 @@ public final class InputDeviceSource: CaptureSource, @unchecked Sendable {
 
     override func deviceIsPresent() -> Bool { inputDeviceIsPresent(uid: uid) }
 }
+#endif

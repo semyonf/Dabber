@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Foundation
 import Synchronization
@@ -261,3 +262,4 @@ public class CaptureSource: @unchecked Sendable {
         }
     }
 }
+#endif

@@ -33,7 +33,7 @@ public struct TranscriptLine: Equatable, Sendable {
 
 public enum Transcript {
     public static let me = "Я"
-    static let others = "Собеседники"
+    public static let others = "Собеседники"
     static let textFile = "transcript.txt"
     static let srtFile = "transcript.srt"
     static let pauseMillis = 1_000

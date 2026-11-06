@@ -15,13 +15,18 @@ public enum Finalizer {
         let base: String
         let channels: Int
         let backup: Bool
+        let mic: Bool
         let speaker: String
         let reader: TimelineReader
         let plans: [FinalizePlan]
     }
 
+    /// With `cleanMics`, every mono microphone track loses the echo of Mac audio and noise before it is encoded,
+    /// mixed and transcribed: through `micModel` (LocalVQE) when it can open a stream, otherwise through `MicCleaner`.
     @discardableResult
-    public static func run(_ dir: URL, speech: SpeechToText? = nil) throws -> FinalizeReport {
+    public static func run(
+        _ dir: URL, speech: SpeechToText? = nil, cleanMics: Bool = false, micModel: MicModel? = nil
+    ) throws -> FinalizeReport {
         var manifest = try SessionManifest.load(from: dir)
         let marker = dir.appendingPathComponent(transcribingMarker)
         let unfinished = max(0, (try? String(contentsOf: marker, encoding: .utf8)).flatMap { Int($0) } ?? 0)
@@ -54,7 +59,7 @@ public enum Finalizer {
             }
             let placements = Timeline.place(plans.map(\.segment), sessionStartNanos: manifest.sessionStartNanos)
             tracks.append(Track(
-                base: source.trackBase, channels: source.channels, backup: source.backup == true,
+                base: source.trackBase, channels: source.channels, backup: source.backup == true, mic: source.kind == .mic,
                 speaker: source.kind == .mic ? Transcript.me : Transcript.others,
                 reader: TimelineReader(placements: placements, sources: sources, channels: source.channels),
                 plans: plans))
@@ -63,10 +68,33 @@ public enum Finalizer {
         var slidesError: String?
         let writers = try tracks.map { try AACWriter(url: dir.appendingPathComponent($0.base + ".m4a"), channels: $0.channels) }
         let mix = try AACWriter(url: dir.appendingPathComponent(mixFile), channels: 2)
+        let references = tracks.indices.filter { !tracks[$0].mic && !tracks[$0].reader.placements.isEmpty }
+        let cleaned = cleanMics
+            ? tracks.indices.filter { tracks[$0].mic && tracks[$0].channels == 1 && !tracks[$0].reader.placements.isEmpty }
+            : []
+        let lags = try references.isEmpty || cleaned.isEmpty
+            ? [:] : echoLags(tracks, mics: cleaned, references: references, total: total)
+        var modelError: String?
+        let cleaners = try cleaned.map { i in
+            let echo = lags[i] != nil
+            var cleaner: any MicCleaning = MicCleaner(echo: echo)
+            if let micModel, modelError == nil {
+                do { cleaner = ModelMicCleaner(echo: echo, stream: try micModel()) } catch { modelError = brief(error) }
+            }
+            let cleaning = Cleaning(track: i, cleaner: cleaner, shift: (lags[i] ?? 0) - cleaner.headroom)
+            // The first `latency` frames only fill the cleaner; what it returns for them is silence before the start.
+            let first = try cleaning.input(tracks, references: references, ahead: 0..<cleaner.latency)
+            _ = cleaner.process(mic: first.mic, reference: first.reference)
+            return cleaning
+        }
         var start = 0
         while start < total {
             let range = start..<min(start + chunkFrames, total)
-            let pcms = try tracks.map { try $0.reader.read(range) }
+            var pcms = try tracks.indices.map { i in
+                try cleaned.contains(i) ? [] : tracks[i].reader.read(range)
+            }
+            let outputs = try cleanConcurrently(cleaners, tracks, references: references, range: range)
+            for (cleaning, output) in zip(cleaners, outputs) { pcms[cleaning.track] = output }
             let contributing = zip(tracks, pcms).filter { !$0.0.reader.placements.isEmpty }
             let mono = contributing.filter { $0.0.channels == 1 && !$0.0.backup }.map(\.1)
             let stereo = contributing.filter { $0.0.channels != 1 }.map(\.1)
@@ -127,10 +155,19 @@ public enum Finalizer {
                 if plan.resample { resampled.append(plan.file) }
             }
         }
+        var echoDelays: [String: Double] = [:]
+        for (i, lag) in lags { echoDelays[tracks[i].base] = Double(lag) * 1000 / Double(Timeline.rate) }
+        let failures = cleaners.compactMap { c in c.cleaner.failure.map { "\(tracks[c.track].base): \($0)" } }
+        let cleanedWith: String? = cleaners.isEmpty ? nil
+            : cleaners.contains(where: { $0.cleaner is ModelMicCleaner }) ? "LocalVQE"
+            : micModel == nil ? "MicCleaner" : "MicCleaner (LocalVQE: \(modelError ?? "not used"))"
         let report = FinalizeReport(
             totalFrames: total, gaps: gaps, driftMillis: drift, resampled: resampled, slidesError: slidesError,
             unreadable: unreadable.isEmpty ? nil : unreadable,
-            transcriptError: transcriptError, subtitlesError: subtitlesError)
+            transcriptError: transcriptError, subtitlesError: subtitlesError,
+            cleanedMics: cleanMics ? cleaned.map { tracks[$0].base } : nil,
+            echoDelayMillis: echoDelays.isEmpty ? nil : echoDelays,
+            micCleaner: cleanedWith, micCleanerError: failures.isEmpty ? nil : failures.joined(separator: "; "))
         manifest.finalize = report
         try manifest.save(to: dir)
         for name in rendered where !unreadable.contains(name) {
@@ -140,6 +177,76 @@ public enum Finalizer {
             try? FileManager.default.removeItem(at: dir.appendingPathComponent(SessionManifest.framesDir))
         }
         return report
+    }
+
+    /// One microphone track being cleaned. Its input is read the cleaner's `latency` frames ahead of the range being
+    /// written, so that the cleaner's output lands on the same timeline; Mac audio is read `shift` frames earlier
+    /// than the mic, so that the echo in the mic lines up with the start of the cleaner's filter.
+    private struct Cleaning: Sendable {
+        let track: Int
+        let cleaner: any MicCleaning
+        let shift: Int
+
+        func input(_ tracks: [Track], references: [Int], ahead: Range<Int>) throws -> (mic: [Float], reference: [Float]) {
+            let mic = try tracks[track].reader.read(ahead)
+            let reference = try cleaner.echo
+                ? referenceMono(tracks, references, (ahead.lowerBound - shift)..<(ahead.upperBound - shift))
+                : []
+            return (mic, reference)
+        }
+    }
+
+    /// Mac audio as one mono signal: the channels of every Mac audio track averaged, the tracks added.
+    private static func referenceMono(_ tracks: [Track], _ references: [Int], _ range: Range<Int>) throws -> [Float] {
+        var out = [Float](repeating: 0, count: range.count)
+        for i in references {
+            let pcm = try tracks[i].reader.read(range)
+            let channels = tracks[i].channels
+            let scale = 1 / Float(channels)
+            for f in 0..<range.count {
+                var sum: Float = 0
+                for c in 0..<channels { sum += pcm[f * channels + c] }
+                out[f] += sum * scale
+            }
+        }
+        return out
+    }
+
+    /// One pass over the recording to find, per microphone, how late it hears Mac audio (`EchoDelay`). A mic with
+    /// no clear echo, for example with headphones, is left out and only gets noise reduction.
+    private static func echoLags(_ tracks: [Track], mics: [Int], references: [Int], total: Int) throws -> [Int: Int] {
+        var estimators = mics.map { _ in EchoDelay() }
+        var start = 0
+        while start < total {
+            let range = start..<min(start + chunkFrames, total)
+            let reference = try referenceMono(tracks, references, range)
+            for (j, i) in mics.enumerated() {
+                estimators[j].add(mic: try tracks[i].reader.read(range), reference: reference)
+            }
+            start = range.upperBound
+        }
+        var lags: [Int: Int] = [:]
+        for (j, i) in mics.enumerated() {
+            if let lag = estimators[j].lag() { lags[i] = lag }
+        }
+        return lags
+    }
+
+    /// Reading stays on this thread (the track readers are not thread-safe); the cleaners run side by side.
+    private static func cleanConcurrently(
+        _ cleaners: [Cleaning], _ tracks: [Track], references: [Int], range: Range<Int>
+    ) throws -> [[Float]] {
+        guard !cleaners.isEmpty else { return [] }
+        let inputs = try cleaners.map { c in
+            let ahead = (range.lowerBound + c.cleaner.latency)..<(range.upperBound + c.cleaner.latency)
+            return try c.input(tracks, references: references, ahead: ahead)
+        }
+        let outputs = Mutex([[Float]](repeating: [], count: cleaners.count))
+        DispatchQueue.concurrentPerform(iterations: cleaners.count) { j in
+            let output = cleaners[j].cleaner.process(mic: inputs[j].mic, reference: inputs[j].reference)
+            outputs.withLock { $0[j] = output }
+        }
+        return outputs.withLock { $0 }
     }
 
     static func slideshow(
@@ -215,8 +322,10 @@ public enum Finalizer {
         return (Transcript.merge(lines), failed.map { "\($0.track): \($0.error.prefix(each))" }.joined(separator: "; "))
     }
 
-    public static func finish(_ dir: URL, speech: SpeechToText? = nil) throws -> URL {
-        try run(dir, speech: speech)
+    public static func finish(
+        _ dir: URL, speech: SpeechToText? = nil, cleanMics: Bool = false, micModel: MicModel? = nil
+    ) throws -> URL {
+        try run(dir, speech: speech, cleanMics: cleanMics, micModel: micModel)
         return try rename(dir)
     }
 
@@ -269,12 +378,12 @@ public enum Finalizer {
 
     @discardableResult
     public static func recoverAll(
-        dirs: [URL], speech: SpeechToText? = nil, onError: (URL, Error) -> Void = { _, _ in }, onReport: (URL, FinalizeReport) -> Void = { _, _ in }
+        dirs: [URL], speech: SpeechToText? = nil, cleanMics: Bool = false, micModel: MicModel? = nil, onError: (URL, Error) -> Void = { _, _ in }, onReport: (URL, FinalizeReport) -> Void = { _, _ in }
     ) -> [URL] {
         var done: [URL] = []
         for dir in dirs where needsRecovery(dir) {
             do {
-                let report = try run(dir, speech: speech)
+                let report = try run(dir, speech: speech, cleanMics: cleanMics, micModel: micModel)
                 let named = try rename(dir)
                 onReport(named, report)
                 done.append(named)

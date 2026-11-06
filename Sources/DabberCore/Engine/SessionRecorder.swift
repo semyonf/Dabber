@@ -1,4 +1,6 @@
+#if os(macOS)
 import Foundation
+import Synchronization
 
 public enum RecorderError: Error, CustomStringConvertible {
     case busy
@@ -62,6 +64,8 @@ public final class SessionRecorder: @unchecked Sendable {
     }
 
     public typealias MakeSource = @Sendable (SourceSpec, URL, String) -> CaptureSource
+    /// Receives every track's samples as they are written: track name, kind, 48 kHz samples, channels.
+    public typealias LiveAudio = @Sendable (String, SourceKind, [Float], Int) -> Void
 
     public let root: URL
     public let appVersion: String
@@ -77,6 +81,10 @@ public final class SessionRecorder: @unchecked Sendable {
     private var startedAt: Date?
     private var silence: [String: SilenceRule] = [:]
     private var sleepWatcher: SleepWatcher?
+    /// Its own lock: the writers call it while `lock` may be held by a stop waiting for them.
+    private let liveAudio = LiveAudioSlot()
+    /// The live sink runs here, never on a writer's queue: whatever it does cannot hold up or break the recording.
+    private let liveQueue = DispatchQueue(label: "dabber.live", qos: .utility)
     private var lastError: String?
     private var lastDiskCheck: Date?
     private var diskWarning: String?
@@ -163,6 +171,16 @@ public final class SessionRecorder: @unchecked Sendable {
     private func wire(_ source: CaptureSource, index: Int) {
         source.writer.onSegmentsChanged = { [weak self] records in self?.segmentsChanged(index: index, records) }
         source.writer.onWriteError = { [weak self] error in self?.stopAfterError(error) }
+        let (base, kind, channels) = (source.writer.baseName, source.spec.kind, source.writer.channels)
+        source.writer.onAudio = { [weak self] samples in
+            guard let self, let sink = liveAudio.current else { return }
+            liveQueue.async { sink(base, kind, samples, channels) }
+        }
+    }
+
+    /// Sets who receives the samples of every track (nil: nobody); applies to running recordings at once.
+    public func setLiveAudio(_ sink: LiveAudio?) {
+        liveAudio.set(sink)
     }
 
     private static func createSessionDir(in root: URL, name: String) throws -> URL {
@@ -438,3 +456,19 @@ public final class SessionRecorder: @unchecked Sendable {
         stop()
     }
 }
+/// Holds the live audio sink. Not a `Mutex<LiveAudio?>`: reading a closure out of it with `withLock { $0 }` goes
+/// through an `inout` access, and Swift wrote the closure back wrapped in two more reabstraction thunks every time.
+/// Read for every 50 ms of every track, the chain grew by thousands of levels in minutes, until calling it ran the
+/// thread out of stack (crash reports of 2026-11-05: `recursionInfoArray` depth 4761). A plain property under a lock
+/// is read without a write-back.
+final class LiveAudioSlot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sink: SessionRecorder.LiveAudio?
+
+    var current: SessionRecorder.LiveAudio? { lock.withLock { sink } }
+
+    func set(_ sink: SessionRecorder.LiveAudio?) {
+        lock.withLock { self.sink = sink }
+    }
+}
+#endif

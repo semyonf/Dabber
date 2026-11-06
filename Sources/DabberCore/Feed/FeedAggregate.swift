@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Foundation
 
@@ -70,3 +71,4 @@ public final class FeedAggregate: Sendable {
         if let tapID { AudioHardwareDestroyProcessTap(tapID) }
     }
 }
+#endif

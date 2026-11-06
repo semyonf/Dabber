@@ -15,7 +15,9 @@ Dabber is a small macOS menu bar app that records what your Mac plays and what y
   recorded files and are also saved to `marks.txt`.
 - **Slides** (optional): with "Record slides" on, Dabber takes a screenshot every 2 seconds and, after Stop, makes a
   video: the mix plays, and each change of the screen stays in the picture until the next change. No screen video
-  is recorded.
+  is recorded. The screenshot can be the whole screen, one window (kept while you switch desktops) or an area.
+- **Clean microphones** (on by default): after Stop, the microphone tracks lose the call audio that the mic heard from
+  the Mac's speakers (echo), background noise and the room's reverb, with a small neural model on your Mac.
 - **Transcript** (on your Mac): text and subtitles for every recording, with «Я» and «Собеседники».
 - **Names from the calendar**: a recording is named after the calendar event that is on (or starts within 15 minutes).
   You can change the name while recording.
@@ -199,14 +201,56 @@ recording, Dabber takes a screenshot of the display with the mouse pointer every
 when the screen has changed; a blinking text cursor or the menu bar clock does not count. The pointer itself is not
 in the picture.
 
+**Choose…** next to the switch opens a window like the share window of call apps: the whole screen, an area and a
+picture of every window. Click one and press Use (or double-click it). It can be changed while recording; the next
+screenshot uses it.
+- **Whole screen** (default): the display with the mouse pointer.
+- **A window** (windows of all desktops, the ones on screen first): only that window, even when other windows cover it or you
+  swipe to another desktop (Space). A minimized window is not captured. Some apps, browsers among them, stop
+  redrawing a window nobody sees, so it may stay frozen until you come back to it. If the window is closed, the menu
+  says "Screen: the chosen … window is closed" and no screenshots are taken until you choose something else.
+- **Area…**: after Choose area the screens dim; drag a rectangle on any display (Esc cancels). With **Area follows
+  when you switch desktops** (in the menu, under the slides switch) on (default), it is that part of whatever the display shows, so it goes along when you swipe to another
+  desktop. Off, it keeps showing the desktop where you chose it while you work on another one: Dabber captures each
+  window of that desktop by itself and puts them together, over a dark background instead of the wallpaper. macOS
+  does not tell apps which desktop a window is on, so Dabber takes the windows that were on screen when you chose the
+  area, and updates the list whenever you are back on that desktop.
+
 After Stop, Dabber makes `<name>.mp4` next to the mix: the same sound, HEVC video at the screen's own resolution (3456 pixels wide at most), the same
 chapters. Each kept screenshot is shown until the next one; the first one is shown from 0:00. The screenshots
 are deleted after the video is made. If the video could not be made, the menu says "Slides video failed: …", the
 audio files are complete as usual, and the screenshots stay in the `frames` folder of the recording (HEIC files named
 by nanoseconds since the start).
 
-Everything on that display goes into the video: notifications, chats, passwords shown on screen. Turn Record slides
+Everything in the chosen screen, window or area goes into the video: notifications, chats, passwords shown on
+screen. Turn Record slides
 off for recordings where this matters.
+
+### Clean up microphones
+
+Without headphones the microphone also hears the call from the Mac's speakers, so the other side is recorded twice:
+clean in the Mac audio track and late, with the room's echo, in the microphone track. With **Clean up microphones** on
+(under the sources, on by default), Dabber removes this from every microphone track after Stop, before the files are
+encoded, mixed and transcribed:
+
+- **Echo of Mac audio.** Dabber measures how late the microphone hears Mac audio and gives both to
+  [LocalVQE](https://github.com/localai-org/LocalVQE), a neural model for echo cancellation, noise suppression and
+  dereverberation. While only the other side speaks, the microphone track goes quiet. When you speak at the same time,
+  your voice stays. A microphone that does not hear Mac audio (headphones) gets only the noise and reverb removal.
+- **Noise and room**: fans, hum, keyboard, traffic, and the echo of the room in your own voice.
+
+The model works on 16 kHz sound, that is up to 8 kHz. What a good microphone records above that is kept from the
+original track wherever the model kept your voice, and removed with the rest everywhere else. The model (about 19 MB)
+is downloaded from Hugging Face in the background when the app starts with the switch on, or when you turn it on, and
+is kept in `~/Library/Application Support/FluidAudio/Models/`. A recording stopped before it is loaded (the first one
+after installing, or one made offline) is cleaned by the older built-in filter instead: an adaptive echo filter and
+steady noise reduction, which leave some echo and a "bubbly" trace of it. Cleaning takes about a minute or two per hour
+of each microphone on an Apple Silicon Mac.
+
+`session.json` lists the cleaned tracks (`cleanedMics`), the measured delay (`echoDelayMillis`) and what cleaned them
+(`micCleaner`: `LocalVQE`, or `MicCleaner` with the reason the model was not used). If the model fails part way,
+the rest of that track is left as recorded and `micCleanerError` says so. The switch is read when a recording is finished, so it applies to recordings stopped after the
+change. Turn it off to keep the microphone tracks exactly as recorded: the cleaning cannot be undone in the finished files.
 
 ### Transcript and subtitles
 
@@ -217,6 +261,14 @@ below 0.6) are left out; this removes phrases the model invents from near-silenc
 
 When you use speakers instead of headphones, the microphone also hears Mac audio: words that repeat Mac audio are left
 out of «Я». A lone word, or Mac speech the model heard differently through the microphone, may still slip through.
+
+**Live transcript** (a switch under Transcribe, off by default): while recording, the menu shows the lines as they come,
+so you can read what you just missed. The pin button in its header moves it to a large translucent panel over all
+windows (on every desktop, over a full-screen call too) that you can drag anywhere and resize; the pin in the panel, or
+closing it, puts the transcript back into the menu. A pinned transcript opens again with the next recording. A line appears about 8 seconds after it was said (each track is transcribed
+in 6-second windows). The lines are only shown, not saved: the transcript written after Stop is made again from the
+whole recording and is more accurate. Live lines of «Я» may repeat the other side when you use speakers. It uses the
+same speech model; until the model is downloaded the menu says so. It can be turned on or off during a recording.
 
 - `transcript.txt`: the text with times, speakers and your marks.
 - `transcript.srt`: subtitles for any player. Both files are written next to the recording.
@@ -342,7 +394,8 @@ Your recordings in the output folder are not touched.
 - **"Finishing…" takes a long time.** After Stop Dabber encodes every track and the mix in the background, at low
   priority so that a new recording is not disturbed. This takes longer for long recordings and more sources, longer
   again if the output folder is on another disk, and longer while other apps keep the processor busy. The transcript
-  adds about 15 seconds per hour of audio for each track once the speech model is loaded. You can record meanwhile; if
+  adds about 15 seconds per hour of audio for each track once the speech model is loaded, and Clean up microphones
+  reads the recording once more and processes every microphone track. You can record meanwhile; if
   you quit, Dabber waits for it. If Dabber was closed unexpectedly, unfinished recordings are finished at the next
   launch.
 
@@ -355,6 +408,12 @@ Your recordings in the output folder are not touched.
 - Run tests with `scripts/test.sh`. With only the Command Line Tools installed, plain `swift test` cannot find the
   Swift Testing macro plugin; the script passes its path.
 - `scripts/build-app.sh` builds `build/Dabber.app` without installing it.
+- `scripts/make-echo-tests.py` builds test recordings for microphone cleaning in `build/echo-tests`: a call without
+  headphones in three simulated rooms, with the Mac audio track, the microphone track and what a perfect cleaner would
+  leave of it. Needs Python with `numpy scipy soundfile pyarrow`; downloads 9 MB of LibriSpeech speech on first run.
+- `iPad/`: Dabber for iPad (experimental), an Xcode project generated with XcodeGen; see `iPad/README.md`. It records
+  through a screen broadcast and finishes recordings with the same `DabberCore`; on iOS the package builds only the
+  parts that do not touch Core Audio devices (`#if os(macOS)` around the rest).
 - `docs/` holds the design specs, implementation plans and the results of hardware experiments ("spikes") made
   while building Dabber.
 
@@ -370,4 +429,5 @@ Audio Inc., licensed under GPL-3.0. Its source, license and the list of local ch
 
 Speech recognition uses [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0) and the NVIDIA
 [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model (CC-BY-4.0), converted to CoreML by
-FluidInference.
+FluidInference. Microphone cleaning uses the [LocalVQE](https://github.com/localai-org/LocalVQE) model (Apache-2.0) by
+the LocalAI team, converted to CoreML by FluidInference.

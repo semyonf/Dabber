@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 public final class SleepWatcher: @unchecked Sendable {
@@ -14,3 +15,4 @@ public final class SleepWatcher: @unchecked Sendable {
         tokens.removeAll()
     }
 }
+#endif

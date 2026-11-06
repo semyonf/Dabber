@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 
 public enum AppPaths {
@@ -18,3 +19,4 @@ public enum AppPaths {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
     }
 }
+#endif

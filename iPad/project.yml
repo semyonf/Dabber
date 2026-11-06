@@ -1,0 +1,77 @@
+# XcodeGen spec for Dabber on iPad. Run ./make-project.sh TEAM_ID to create the Xcode project.
+name: DabberPad
+options:
+  deploymentTarget:
+    iOS: "18.0"
+configFiles:
+  Debug: Local.xcconfig
+  Release: Local.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "2"
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+packages:
+  Dabber:
+    path: ..
+targets:
+  DabberPad:
+    type: application
+    platform: iOS
+    sources: [App, Shared]
+    dependencies:
+      - package: Dabber
+        product: DabberCore
+      - package: Dabber
+        product: DabberSpeech
+      - target: DabberBroadcast
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(DABBER_BUNDLE_PREFIX)
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Dabber
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations~ipad:
+          [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown,
+           UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        NSMicrophoneUsageDescription: Dabber records your microphone during a screen broadcast.
+        NSCalendarsFullAccessUsageDescription: Dabber names a recording after the calendar event that is on.
+        DabberAppGroup: $(DABBER_APP_GROUP)
+    entitlements:
+      path: App/App.entitlements
+      properties:
+        com.apple.security.application-groups: [$(DABBER_APP_GROUP)]
+  DabberBroadcast:
+    type: app-extension
+    platform: iOS
+    sources: [Broadcast, Shared]
+    dependencies:
+      - package: Dabber
+        product: DabberCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(DABBER_BUNDLE_PREFIX).broadcast
+    info:
+      path: Broadcast/Info.plist
+      properties:
+        CFBundleDisplayName: Dabber
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSMicrophoneUsageDescription: Dabber records your microphone during a screen broadcast.
+        DabberAppGroup: $(DABBER_APP_GROUP)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.broadcast-services-upload
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SampleHandler
+          RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
+    entitlements:
+      path: Broadcast/Broadcast.entitlements
+      properties:
+        com.apple.security.application-groups: [$(DABBER_APP_GROUP)]

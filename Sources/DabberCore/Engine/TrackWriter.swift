@@ -1,3 +1,4 @@
+#if os(macOS)
 import AVFoundation
 import AudioToolbox
 import CoreAudio
@@ -43,6 +44,8 @@ public final class TrackWriter: @unchecked Sendable {
     public var onFormatMismatch: (@Sendable () -> Void)?
     public var onWriteError: (@Sendable (Error) -> Void)?
     public var onSegmentsChanged: (@Sendable ([SegmentRecord]) -> Void)?
+    /// The 48 kHz samples as they are written (interleaved), on the writer's queue: for the live transcript.
+    public var onAudio: (@Sendable ([Float]) -> Void)?
 
     private let ring: RingBuffer
     private let dir: URL
@@ -217,6 +220,9 @@ public final class TrackWriter: @unchecked Sendable {
             }
             seg.record.frames += Int(produced)
             meter.update(seg.output.floatChannelData![0], count: Int(produced) * channels)
+            if let onAudio {
+                onAudio(Array(UnsafeBufferPointer(start: seg.output.floatChannelData![0], count: Int(produced) * channels)))
+            }
         }
         current = seg
     }
@@ -235,3 +241,4 @@ public final class TrackWriter: @unchecked Sendable {
         notifySegments()
     }
 }
+#endif

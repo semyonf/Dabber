@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Foundation
 
@@ -23,3 +24,4 @@ public final class OutputIOProcRunner: @unchecked Sendable {
         self.procID = nil
     }
 }
+#endif

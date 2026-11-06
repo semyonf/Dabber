@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let outputKey = "outputFolder"
     private static let legacyKey = "legacySessionsAdopted"
     private static let slidesKey = "recordSlides"
+    private static let screenTargetKey = "screenTarget"
     private static let backupKey = "backupMic"
     private static let transcribeKey = "transcribe"
 
@@ -17,16 +18,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.object(forKey: transcribeKey) as? Bool ?? true
     }
     nonisolated private static var speech: SpeechToText? { transcribeOn ? ParakeetSpeech.shared.transcribe : nil }
+    /// "Clean up microphones" in the menu; on unless switched off. Read when a recording is finished.
+    static let cleanMicsKey = "cleanMics"
+    nonisolated private static var cleanMicsOn: Bool {
+        UserDefaults.standard.object(forKey: cleanMicsKey) as? Bool ?? true
+    }
+
+    /// "Live transcript" in the menu; off unless switched on.
+    static let liveKey = "liveTranscript"
+    nonisolated static var liveOn: Bool { UserDefaults.standard.bool(forKey: liveKey) }
+    @MainActor private static var wasRecording = false
+
+    /// Starts the live transcript (the recorder then hands it every track's audio) or stops it (and the recorder
+    /// hands nothing on). Called when a recording starts or stops and when the switch changes.
+    @MainActor static func setLive(_ on: Bool) {
+        if on {
+            LiveTranscriber.shared.begin()
+            LiveTranscriptPanel.showIfPinned()
+            recorder.setLiveAudio { track, kind, samples, channels in
+                LiveTranscriber.shared.feed(
+                    track: track, speaker: kind == .mic ? Transcript.me : Transcript.others, samples: samples,
+                    channels: channels)
+            }
+        } else {
+            recorder.setLiveAudio(nil)
+            LiveTranscriber.shared.end()
+        }
+    }
+
+    static let recorder = SessionRecorder(root: AppPaths.workRoot, appVersion: AppPaths.version)
 
     @MainActor static let model = RecorderModel(
-        engine: SessionRecorder(root: AppPaths.workRoot, appVersion: AppPaths.version),
+        engine: recorder,
         catalog: LiveDeviceCatalog(),
         enabledIDs: UserDefaults.standard.stringArray(forKey: enabledKey).map(Set.init)
             ?? RecorderModel.defaultEnabledIDs(defaultInputUID: defaultInputDeviceUID()),
         names: UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String] ?? [:],
         persist: { UserDefaults.standard.set(Array($0).sorted(), forKey: enabledKey) },
         persistNames: { UserDefaults.standard.set($0, forKey: namesKey) },
-        finalize: { try Delivery.finishAndDeliver($0, output: $1, speech: speech) },
+        finalize: {
+            try Delivery.finishAndDeliver(
+                $0, output: $1, speech: speech, cleanMics: cleanMicsOn, micModel: LocalVqeModel.shared.model)
+        },
         calendar: EventKitCalendar(),
         outputFolder: UserDefaults.standard.string(forKey: outputKey).map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? AppPaths.recordingsRoot,
@@ -34,6 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         slides: SlideRecorder(grabber: LiveScreenGrabber()),
         slidesOn: UserDefaults.standard.bool(forKey: slidesKey),
         persistSlides: { UserDefaults.standard.set($0, forKey: slidesKey) },
+        screenTarget: ScreenTarget.decode(UserDefaults.standard.data(forKey: screenTargetKey)),
+        persistScreenTarget: { UserDefaults.standard.set($0.encoded(), forKey: screenTargetKey) },
         transcribeOn: transcribeOn,
         persistTranscribe: {
             UserDefaults.standard.set($0, forKey: transcribeKey)
@@ -81,6 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         ParakeetSpeech.shared.markLoads(in: AppPaths.supportRoot)
         if Self.transcribeOn { ParakeetSpeech.shared.prepare() }
+        if Self.cleanMicsOn { LocalVqeModel.shared.prepare() }
         let pending = Finalizer.sessionFolders(root: work)
         Self.model.finishBeforeQuit(Task.detached(priority: .utility) {
             ParakeetSpeech.removeStaleTempFiles()
@@ -89,7 +125,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await ParakeetSpeech.shared.waitIfCached(seconds: 60)
             }
             let failure = Delivery.recover(
-                pending, work: work, output: output, speech: speech,
+                pending, work: work, output: output, speech: speech, cleanMics: Self.cleanMicsOn,
+                micModel: LocalVqeModel.shared.model,
                 onError: { dir, error in Task { @MainActor in Self.model.recoveryFailed(dir, error) } },
                 onReport: { dir, report in Task { @MainActor in Self.model.recovered(dir, report) } })
             await MainActor.run { Self.model.deliveryDone(failure: failure) }
@@ -100,6 +137,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             Task { @MainActor in
+                if Self.model.isRecording != Self.wasRecording {
+                    Self.wasRecording = Self.model.isRecording
+                    if Self.wasRecording, Self.liveOn { Self.setLive(true) }
+                    if !Self.wasRecording { Self.setLive(false) }
+                }
                 Self.ticks += 1
                 guard Self.model.menuOpen || Self.ticks % 4 == 0 else { return }
                 Self.model.tick()

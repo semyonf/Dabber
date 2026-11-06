@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 import Foundation
 
@@ -31,3 +32,4 @@ public final class DuplexIOProcRunner: @unchecked Sendable {
         self.procID = nil
     }
 }
+#endif

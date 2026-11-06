@@ -1104,3 +1104,70 @@ extension FinalizerTests {
         #expect(asked.names == ["computer audio.m4a"])
     }
 }
+
+extension FinalizerTests {
+    @Test func cleanMicsRemovesTheEchoOfMacAudioFromTheMicTrack() throws {
+        let dir = try echoSession()
+        let report = try Finalizer.run(dir, cleanMics: true)
+        #expect(report.cleanedMics == ["mic - A"])
+        #expect(report.micCleaner == "MicCleaner")
+        #expect(report.echoDelayMillis?["mic - A"] == 10)
+        #expect(try AVAudioFile(forReading: dir.appendingPathComponent("mic - A.m4a")).length == AVAudioFramePosition(5 * 48_000))
+        // The echo was at about 0.087 RMS.
+        #expect(try rms(dir.appendingPathComponent("mic - A.m4a"), from: 3 * 48_000, frames: 48_000) < 0.01)
+        #expect(try rms(dir.appendingPathComponent("computer audio.m4a"), from: 3 * 48_000, frames: 48_000) > 0.1)
+    }
+
+    @Test func cleanMicsUsesTheModelWhenItIsReady() throws {
+        let dir = try echoSession()
+        let report = try Finalizer.run(dir, cleanMics: true, micModel: { SilentModel() })
+        #expect(report.micCleaner == "LocalVQE")
+        #expect(report.micCleanerError == nil)
+        #expect(try AVAudioFile(forReading: dir.appendingPathComponent("mic - A.m4a")).length == AVAudioFramePosition(5 * 48_000))
+        #expect(try rms(dir.appendingPathComponent("mic - A.m4a"), from: 3 * 48_000, frames: 48_000) < 0.001)
+    }
+
+    @Test func cleanMicsFallsBackToMicCleanerWhenTheModelIsNotReady() throws {
+        let dir = try echoSession()
+        let report = try Finalizer.run(dir, cleanMics: true, micModel: { throw NotReady() })
+        #expect(report.micCleaner == "MicCleaner (LocalVQE: not ready)")
+        #expect(try rms(dir.appendingPathComponent("mic - A.m4a"), from: 3 * 48_000, frames: 48_000) < 0.01)
+    }
+
+    /// Five seconds: the mic hears Mac audio 10 ms late at half the level, and nothing else.
+    private func echoSession() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fin-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let s: UInt64 = 10_000_000_000
+        let frames = 5 * 48_000
+        var m = SessionManifest(appVersion: "t", startedAt: startedAt, sessionStartNanos: s)
+        m.sources = [
+            SourceManifest(kind: .mic, uid: "u", name: "A", file: "mic - A.m4a", channels: 1, segments: [
+                SegmentRecord(file: "mic - A.seg000.caf", startNanos: s, frames: frames, endNanos: s + 5_000_000_000, sourceRate: 48_000, sourceChannels: 1, reason: "start"),
+            ], restarts: [], overruns: 0),
+            SourceManifest(kind: .computer, uid: nil, name: "Computer audio", file: "computer audio.m4a", channels: 2, segments: [
+                SegmentRecord(file: "computer audio.seg000.caf", startNanos: s, frames: frames, endNanos: s + 5_000_000_000, sourceRate: 48_000, sourceChannels: 2, reason: "start"),
+            ], restarts: [], overruns: 0),
+        ]
+        try m.save(to: dir)
+        var x: UInt64 = 1
+        let mac = (0..<frames).map { _ -> Float in
+            x = x &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Float(Double(x >> 40) / Double(1 << 24) * 2 - 1) * 0.3
+        }
+        let mic = (0..<frames).map { $0 >= 480 ? 0.5 * mac[$0 - 480] : 0 }
+        try writeCAF(dir.appendingPathComponent("mic - A.seg000.caf"), samples: mic, channels: 1)
+        try writeCAF(dir.appendingPathComponent("computer audio.seg000.caf"), samples: mac.flatMap { [$0, $0] }, channels: 2)
+        return dir
+    }
+}
+
+/// A model that removes everything.
+private final class SilentModel: MicModelStream {
+    let buffering = 0
+    func enhance(mic: [Float], reference: [Float]) throws -> [Float] { [Float](repeating: 0, count: mic.count) }
+}
+
+private struct NotReady: Error, CustomStringConvertible {
+    var description: String { "not ready" }
+}

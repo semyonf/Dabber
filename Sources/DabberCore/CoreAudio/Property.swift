@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 
 public struct CAError: Error, CustomStringConvertible {
@@ -52,3 +53,4 @@ public func getString(_ object: AudioObjectID, _ addr: AudioObjectPropertyAddres
     try check(AudioObjectGetPropertyData(object, &a, 0, nil, &size, &value), "get \(fourCC(addr.mSelector))")
     return value.map { $0.takeRetainedValue() as String } ?? ""
 }
+#endif

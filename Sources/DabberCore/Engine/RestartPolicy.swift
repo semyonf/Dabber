@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreAudio
 
 public enum WatchedObject: Sendable, Equatable {
@@ -27,3 +28,4 @@ public enum RestartPolicy {
         selector != kAudioHardwarePropertyDevices && selectors(for: object).contains(selector)
     }
 }
+#endif
