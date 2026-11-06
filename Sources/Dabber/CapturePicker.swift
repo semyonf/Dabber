@@ -60,11 +60,9 @@ struct CapturePickerView: View {
     let current: ScreenTarget
     let done: (CaptureChoice?) -> Void
 
-    @State private var selection: CaptureChoice?
-    @State private var windows: [LiveScreenGrabber.WindowChoice] = []
-    @State private var pictures: [UInt32: LiveScreenGrabber.Picture] = [:]
-    @State private var screen: LiveScreenGrabber.Picture?
-    @State private var loaded = false
+    /// The view is the root of its panel and is made once, so it can own its state without `@State`, whose macro
+    /// plugin the Command Line Tools do not have.
+    private let state = CapturePickerState()
 
     private let columns = [GridItem(.adaptive(minimum: 170, maximum: 240), spacing: 16)]
 
@@ -74,19 +72,19 @@ struct CapturePickerView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     group("Screen") {
                         tile(.screen, title: "Whole screen", subtitle: "The display with the pointer",
-                             picture: screen?.image, icon: nil, symbol: "display")
+                             picture: state.screen?.image, icon: nil, symbol: "display")
                         tile(.area, title: "Area…", subtitle: "Drag a rectangle on any display",
                              picture: nil, icon: nil, symbol: "rectangle.dashed")
                     }
                     group("Windows") {
-                        ForEach(windows) { window in
+                        ForEach(state.windows) { window in
                             tile(.window(window.target), title: window.target.app,
                                  subtitle: window.target.title + (window.onScreen ? "" : " · other desktop"),
-                                 picture: pictures[window.id]?.image,
+                                 picture: state.pictures[window.id]?.image,
                                  icon: NSRunningApplication(processIdentifier: window.pid)?.icon, symbol: "macwindow")
                         }
                     }
-                    if loaded && windows.isEmpty {
+                    if state.loaded && state.windows.isEmpty {
                         Text("No windows found. Dabber needs Screen Recording permission in System Settings > Privacy & Security.")
                             .font(.callout).foregroundStyle(.secondary)
                     }
@@ -98,9 +96,9 @@ struct CapturePickerView: View {
                 Text(hint).font(.callout).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { done(nil) }.keyboardShortcut(.cancelAction)
-                Button(selection == .area ? "Choose area" : "Use") { done(selection) }
+                Button(state.selection == .area ? "Choose area" : "Use") { done(state.selection) }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(selection == nil)
+                    .disabled(state.selection == nil)
             }
             .padding(14)
         }
@@ -109,7 +107,7 @@ struct CapturePickerView: View {
     }
 
     private var hint: String {
-        switch selection {
+        switch state.selection {
         case .window: "Recorded even when covered or on another desktop; not when minimized."
         case .area: "The screens dim: drag a rectangle, Esc cancels."
         case .screen: "Whatever the display with the pointer shows."
@@ -128,7 +126,7 @@ struct CapturePickerView: View {
     private func tile(
         _ choice: CaptureChoice, title: String, subtitle: String, picture: CGImage?, icon: NSImage?, symbol: String
     ) -> some View {
-        let selected = selection == choice
+        let selected = state.selection == choice
         return VStack(alignment: .leading, spacing: 6) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.quaternary.opacity(0.6))
@@ -150,21 +148,30 @@ struct CapturePickerView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { done(choice) }
-        .onTapGesture { selection = choice }
+        .onTapGesture { state.selection = choice }
         .help(subtitle)
     }
 
     private func load() async {
         switch current {
-        case .screen: selection = .screen
-        case .area: selection = .area
-        case .window(let window): selection = .window(window)
+        case .screen: state.selection = .screen
+        case .area: state.selection = .area
+        case .window(let window): state.selection = .window(window)
         }
-        windows = await LiveScreenGrabber.windows()
-        loaded = true
-        screen = await LiveScreenGrabber.screenThumbnail()
-        for await (id, picture) in LiveScreenGrabber.thumbnails(of: windows.map(\.id)) {
-            pictures[id] = picture
+        state.windows = await LiveScreenGrabber.windows()
+        state.loaded = true
+        state.screen = await LiveScreenGrabber.screenThumbnail()
+        for await (id, picture) in LiveScreenGrabber.thumbnails(of: state.windows.map(\.id)) {
+            state.pictures[id] = picture
         }
     }
+}
+
+@MainActor @Observable
+final class CapturePickerState {
+    var selection: CaptureChoice?
+    var windows: [LiveScreenGrabber.WindowChoice] = []
+    var pictures: [UInt32: LiveScreenGrabber.Picture] = [:]
+    var screen: LiveScreenGrabber.Picture?
+    var loaded = false
 }

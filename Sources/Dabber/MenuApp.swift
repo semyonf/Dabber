@@ -25,7 +25,8 @@ struct MenuApp: App {
 struct MenuContent: View {
     let model: RecorderModel
     let feed: FeedModel
-    @State private var virtualMicOpen = false
+    /// Kept between launches; `@AppStorage` instead of `@State`, whose macro plugin the Command Line Tools lack.
+    @AppStorage("virtualMicOpen") private var virtualMicOpen = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
