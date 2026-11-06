@@ -226,8 +226,7 @@ struct SlidesCard: View {
             Toggle("Record slides", isOn: Binding(get: { model.slidesOn }, set: { _ in model.toggleSlides() }))
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .disabled(model.isRecording)
-                .help(model.isRecording ? "Slides can be switched on or off only before Record" : "A screenshot every 2 s when the picture changes, made into a video after Stop")
+                .help("A screenshot every 2 s when the picture changes, made into a video after Stop. Can be switched on or off during a recording too")
             if model.slidesOn {
                 HStack(spacing: 8) {
                     Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 16)

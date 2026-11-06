@@ -21,7 +21,7 @@ enum CapturePicker {
             Self.panel?.close()
             Self.panel = nil
             guard let choice else { return }
-            if !model.slidesOn, !model.isRecording { model.toggleSlides() }
+            if !model.slidesOn { model.toggleSlides() }
             switch choice {
             case .screen: model.setScreenTarget(.screen)
             case .window(let window): model.setScreenTarget(.window(window))

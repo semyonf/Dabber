@@ -889,19 +889,29 @@ private func slidesModel(
     return (m, slides)
 }
 
-@MainActor @Test func slidesSwitchIsSavedAndLockedWhileRecording() async {
-    let e = FakeEngine()
+@MainActor @Test func slidesSwitchIsSaved() async {
     nonisolated(unsafe) var saved: [Bool] = []
-    let (m, _) = slidesModel(e, on: false) { saved.append($0) }
+    let (m, _) = slidesModel(FakeEngine(), on: false) { saved.append($0) }
     m.toggleSlides()
     #expect(m.slidesOn)
-    await m.startStop()
-    m.toggleSlides()
-    #expect(m.slidesOn)
-    await m.startStop()
     m.toggleSlides()
     #expect(!m.slidesOn)
     #expect(saved == [true, false])
+}
+
+/// The call moved to another app mid-recording: slides start and stop without stopping the recording.
+@MainActor @Test func slidesCanBeSwitchedOnAndOffDuringARecording() async {
+    let e = FakeEngine()
+    let (m, slides) = slidesModel(e, on: false)
+    await m.startStop()
+    #expect(slides.status == nil)
+    m.toggleSlides()
+    #expect(slides.status == .on)
+    #expect(await eventually { e.frames.withLock { !$0.isEmpty } })
+    m.toggleSlides()
+    #expect(slides.status == nil)
+    #expect(m.isRecording)
+    await m.startStop()
 }
 
 @MainActor @Test func screenTargetIsSavedAndCanChangeWhileRecording() async {

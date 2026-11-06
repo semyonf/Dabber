@@ -196,8 +196,9 @@ marks are written to `marks.txt` as `HH:MM:SS  comment` lines.
 
 ### Slides
 
-Turn on **Record slides** under the sources before you press Record (it cannot be changed while recording). While
-recording, Dabber takes a screenshot of the display with the mouse pointer every 2 seconds. A screenshot is kept only
+Turn on **Record slides** under the sources. It can be switched on or off during a recording too, for example when
+a call moves from Telegram to Zoom: the recording goes on, and the slides video shows its first picture from the start
+of the recording. While recording, Dabber takes a screenshot of the display with the mouse pointer every 2 seconds. A screenshot is kept only
 when the screen has changed; a blinking text cursor or the menu bar clock does not count. The pointer itself is not
 in the picture.
 

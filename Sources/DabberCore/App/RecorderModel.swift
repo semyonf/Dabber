@@ -231,13 +231,22 @@ public final class RecorderModel {
         persistOutput(url)
     }
 
+    /// May change during a recording too: a call often moves to another app (Telegram fails, everyone goes to Zoom),
+    /// so slides start or stop at once and the recording goes on. The slides video shows its first picture from the
+    /// start of the recording, and its last one until the end.
     public func toggleSlides() {
-        guard !isRecording else { return }
         slidesOn.toggle()
         persistSlides(slidesOn)
+        guard phase == .recording, !stopping, let slides else { return }
+        if slidesOn {
+            let engine = self.engine
+            slides.start { try engine.addFrame(atNanos: $0, data: $1) }
+        } else {
+            slides.stop()
+        }
     }
 
-    /// What the slides show. Unlike the slides switch, this may change during a recording: the next screenshot uses it.
+    /// What the slides show. It may change during a recording: the next screenshot uses it.
     public func setScreenTarget(_ target: ScreenTarget) {
         screenTarget = target
         slides?.target = target
