@@ -311,13 +311,14 @@ struct FooterRow: View {
         .font(.caption)
     }
 
-    /// The standard About window, with the code name in the version line: "Version 1.0.0 “Screaming Ant” (2)".
+    /// The standard About window, with the code name in the version line: "Version 1.0.0 “Screaming Ant”". The build
+    /// number is not shown: Dabber is built from source, with no App Store or updater to read it, so nobody tracks it.
     private func showAbout() {
         let info = Bundle.main.infoDictionary
         let number = info?["CFBundleShortVersionString"] as? String ?? "dev"
         let name = AppPaths.codename.map { " “\($0)”" } ?? ""
         NSApp.activate()
-        NSApp.orderFrontStandardAboutPanel(options: [.applicationVersion: number + name])
+        NSApp.orderFrontStandardAboutPanel(options: [.applicationVersion: number + name, .version: ""])
     }
 
     private func chooseFolder() {
